@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "vector": "cpp",
+        "cstdint": "cpp",
+        "bitset": "cpp",
+        "xutility": "cpp",
+        "unordered_map": "cpp",
+        "xhash": "cpp"
+    }
+}
