@@ -48,6 +48,12 @@ void Registry::ComponentArray<T>::addFrom(void* _component) {
     add(*static_cast<T*>(_component));
 }
 
+
+template<typename T>
+auto Registry::ComponentArray<T>::getRaw(size_t _index) -> void* {
+    return &data[_index];
+}
+
 template<typename T>
 Registry::sComponentArray* Registry::ComponentArray<T>::cloneEmpty() const {
     return new ComponentArray<T>();
@@ -55,21 +61,10 @@ Registry::sComponentArray* Registry::ComponentArray<T>::cloneEmpty() const {
 
 //HELPER DEFINTIONS--------------------------------------------------------------------
 
-template<typename T>
-Registry::ComponentArray<T>* Registry::getComponentArray(Archetype* _archetype) {
-    ComponentType type = getComponentTypeID<T>();
-    //could be a bottleneck, cache pointers if max components will stay fixed
-    auto it = _archetype->component_arrays.find(type);
-    if (it == _archetype->component_arrays.end())
-        return nullptr;
-    
-    return static_cast<ComponentArray<T>*>(it->second);
-};
-
 
 template<typename T>
 void Registry::addComponentToArray(Archetype* _archetype, const T& _component) {
-    auto* array = getComponentArray<T>(_archetype);
+    auto* array = _archetype->getArray();
 
     if (!array) {
         array = new ComponentArray<T>();
@@ -81,7 +76,7 @@ void Registry::addComponentToArray(Archetype* _archetype, const T& _component) {
 
 template<typename T>
 void Registry::removeComponentAt(Archetype* _archetype, size_t _index) {
-    auto array = getComponentArray<T>(_archetype);
+    auto array = _archetype->getArray();
 
     if (array)
         array->remove(_index);

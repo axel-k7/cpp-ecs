@@ -1,5 +1,8 @@
 #include "Registry.h"
 
+//---------------------------------------------------------------------------------------------------------------------
+//ENTITY
+
 //CREATION------------------------------------------------------------------------------------------
 
 
@@ -43,8 +46,8 @@ auto Registry::createEntity(Components&&... _components) {
 
 void Registry::destroyEntity(const Entity& _entity) {
     assert(isValidEntity(_entity));
-    
     EntityRecord& record = records[_entity.id];
+    
     Archetype* archetype = record.archetype;
     if (!archetype)
         return;
@@ -87,7 +90,12 @@ void Registry::destroyEntity(const Entity& _entity) {
 };
 
 //DESTRUCTION END--------------------------------------------------------------------------------------
-//COMPONENTS-------------------------------------------------------------------------------------------
+
+//ENTITY END
+//---------------------------------------------------------------------------------------------------------------------
+//COMPONENTS
+
+//ADD-------------------------------------------------------------------------------------------
 
 
 void Registry::addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component) {
@@ -112,7 +120,7 @@ void Registry::addComponent(const Entity& _entity, ComponentType _type, sCompone
 
     record.signature = new_signature;
 
-    sComponentArray* array = ensureComponentArray(target_archetype, _type, _component);
+    sComponentArray* array = record.archetype->ensureComponentArray(_type, _component);
     array->addFrom(_component);
 }
 
@@ -121,8 +129,7 @@ template<typename T>
 void Registry::addComponent(const Entity& _entity, const T _component) {
     assert(isValidEntity(_entity));
 
-    auto& record = records[_entity.id];
-
+    EntityRecord& record = records[_entity.id];
     Signature new_signature = record.signature;
     new_signature.set(getComponentTypeID<T>(), true);
     
@@ -146,6 +153,97 @@ void Registry::addComponent(const Entity& _entity, const T _component) {
     addComponentToArray(target_archetype, _component)
 }
 
+//ADD END-------------------------------------------------------------------------------------------
+//REMOVE--------------------------------------------------------------------------------------------
+
+void Registry::removeComponent(const Entity& _entity, ComponentType _type) {
+    assert(isValidEntity(_entity));
+
+    EntityRecord& record = records[_entity.id];
+    Archetype* source = record.archetype;
+    if (!source)
+        return;
+    
+    Signature new_signature = record.signature;
+    new_signature.set(_type, false);
+
+    Archetype* target = getArchetype(_type);
+    moveToArchetype(_entity, source, record.index, target);
+
+    record.archetype = target;
+    record.signature = new_signature;
+}
+
+template<typename T>
+void Registry::removeComponent(const Entity& _entity) {
+    assert(isValidEntity(_entity));
+
+    EntityRecord& record = records[_entity.id];
+    Archetype* source = record.archetype;
+    if (!source)
+        return
+
+    ComponentType type = getComponentTypeID<T>();
+    Signature new_signature = record.signature;
+    new_signature.set(type, false);
+
+    Archetype* target = getArchetype(target);
+    moveToArchetype(_entity, source, record.index, target);
+
+    record.archetype = target;
+    record.signature = new_signature;
+}
+
+
+
+//REMOVE END----------------------------------------------------------------------------------------
+//GET-----------------------------------------------------------------------------------------------
+
+
+auto Registry::getComponent(const Entity& _entity, ComponentType _type) -> void* {
+    assert(isValidEntity(_entity));
+
+    EntityRecord& record = records[_entity.id];
+    auto it = record.archetype->component_arrays.find(_type);
+    if (it == record.archetype->component_arrays.end()) {
+        return nullptr;
+    } 
+
+    return it->second->getRaw(record.index);
+} 
+
+template<typename T>
+auto Registry::getComponent(const Entity&) -> T& {
+    assert(isValidEntity(_entity));
+
+    EntityRecord& record = records[_entity.id];
+    ComponentArray* array = record.archetype->getArray<T>();
+    return array->get(record.index);
+} 
+
+//GET END-------------------------------------------------------------------------------------------
+
+//COMPONENTS END
+//---------------------------------------------------------------------------------------------------------------------
+//QUERIES
+
+    //query archetype of same bitmask
+auto Registry::query(const Signature& _signature) -> std::vector<Archetype*> {
+    std::vector<Archetype*> result;
+    for (Archetype* archetype : archetypes) 
+        if ((archetype->signature & _signature) == _signature)
+            result.push_back(archetype);
+        
+    return result;     
+}
+
+    //get bitmask of components and query them
+template<typename... Components>
+auto Registry::query() -> std::vector<Archetype*> {
+    Signature signature;
+    (signature.set(getComponentTypeID>Components>()), ...);
+    return query(signature);
+}
 
 //HELPERS -------------------------------------------------------------------------------------------------------------------------
 
@@ -184,31 +282,41 @@ Registry::Archetype* Registry::getArchetype(const Signature& _signature) {
 //COMPONENTS-------------------------------------------------------------------------------------------------------------------
 
 
-void Registry::cleanupComponentArrays(Archetype* _archetype) {
-    for (auto& [_, array] : _archetype->component_arrays)
+void Registry::Archetype::cleanupComponentArrays() {
+    for (auto& [_, array] : component_arrays)
         delete array;
-    _archetype->component_arrays.clear();
+    component_arrays.clear();
 };
 
 
-Registry::sComponentArray* Registry::ensureComponentArray(Archetype* _target, ComponentType _type, sComponentArray* _source_array) {
-    auto it = _target->component_arrays.find(_type);
-    if (it == _target->component_arrays.end()){
+auto Registry::Archetype::ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> Registry::sComponentArray* {
+    auto it = component_arrays.find(_type);
+    if (it == component_arrays.end()){
         sComponentArray* new_array = _source_array->cloneEmpty();
-        _target->component_arrays[_type] = new_array;
+        component_arrays[_type] = new_array;
         return new_array;
     }
     return it->second;
 };
 
 
-void Registry::transferComponents(Archetype* _source, size_t _source_index, Archetype* _target) {
-    for (auto& [type, source_array] : _source->component_arrays) {
-        
-        sComponentArray* target_array = ensureComponentArray(_target, type, source_array);
-        source_array->moveElement(_source_index, target_array);
-    }
+void Registry::Archetype::transferComponents(const Archetype* _source, size_t _source_index) {
+    for (auto& [type, source_array] : _source->component_arrays)
+        source_array->moveElement(_source_index, ensureComponentArray(type, source_array));
 };
+
+template<typename T>
+auto Registry::hasComponent(const Entity& _entity) -> bool {
+    assert(isValidEntity(_entity));
+    const auto& record = records[_entity.id];
+    return record.signature.test(getComponentTypeID<T>());
+}
+
+
+auto Registry::hasComponent(const Entity& _entity, ComponentType _type) -> bool {
+    assert(isValidEntity(_entity));
+    return records[_entity.id].signature.test(_type);
+}
 
 
 //ENTITIES-----------------------------------------------------------------------
@@ -246,7 +354,7 @@ void Registry::moveToArchetype(Entity _entity, Archetype* _source, size_t _sourc
     size_t new_index = _target->entities.size();
     _target->entities.push_back(_entity);
 
-    transferComponents(_source, _source_index, _target);
+    _source->transferComponents(_target, _source_index);
 
     removeEntityAt(_source, _source_index);
 
@@ -264,9 +372,21 @@ auto Registry::allocateEntity() -> Entity {
     } else {
         id = next_id++;
         versions.push_back(0);
-        records.emplace_back(EntityRecord{ nullptr, 0, {} });
+        records.emplace_back(); //EntityRecord{ nullptr, 0, {} }
     }
 
-    Entity entity{ id, versions[id] };
-    return entity;
+    return Entity{ id, versions[id] };
+}
+
+
+//STRUCT STUFF
+
+template<typename T>
+auto Registry::Archetype::getArray() -> ComponentArray<T>* {
+    auto it = component_arrays.find(Registry::getComponentTypeID<T>());
+
+    if (it != component_arrays.end())
+        return static_cast<ComponentArray<T>*>(it->second)
+
+    return nullptr
 }

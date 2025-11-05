@@ -10,6 +10,7 @@
 
 #include "Entity.h"
 
+//probably change from this
 constexpr size_t MAX_COMPONENTS = 64;
 using Signature = std::bitset<MAX_COMPONENTS>;
 using ComponentType = uint32_t;
@@ -24,6 +25,7 @@ public:
         virtual void removeLast() noexcept = 0;
         virtual void addFrom(void* _component) = 0;
         virtual auto cloneEmpty() const -> sComponentArray* = 0;
+        virtual auto getRaw(size_t _index) -> void* = 0;
     };
 
     template<typename T>
@@ -40,15 +42,25 @@ public:
         void removeLast() override;
         void addFrom(void* _component) override;
         auto cloneEmpty() const -> sComponentArray* override;
+        auto getRaw(size_t _index) -> void* override;
     };
 
     struct Archetype {
         Signature signature;
         std::vector<Entity> entities;
         std::unordered_map<ComponentType, sComponentArray*> component_arrays; //could make array if keeping fixed size (prolly wont)
+
+        ~Archetype();
+
+        template<typename T> auto getArray() -> ComponentArray<T>*;
+
+        auto ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> sComponentArray*;
+        void cleanupComponentArrays();
+        void transferComponents(const Archetype* _source, size_t _source_index);
     };
 
     struct EntityRecord {
+        //Entity entity; could have for debugging
         Archetype* archetype;
         uint32_t index;
         Signature signature;
@@ -65,27 +77,31 @@ public:
 
     std::unordered_map<Signature, Archetype*> signature_map;
 
-    auto createEntity() -> Entity;
-    auto createEntity(const Signature& _signature) -> Entity;
     template<typename... Components>
     auto createEntity(Components&&... _components);
+    auto createEntity(const Signature& _signature) -> Entity;
+    auto createEntity() -> Entity;
 
-    void destroyEntity(const Entity& _entity);
     template<typename... Components>
     void destroyEntity(const Entity& _entity);
+    void destroyEntity(const Entity& _entity);
 
-    void addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component);
     template<typename T>
     void addComponent(const Entity& _entity, T _component);
+    void addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component);
 
-    void removeComponent(const Entity& _entity, ComponentType _type);
     template<typename T>
     void removeComponent(const Entity& _entity);
+    void removeComponent(const Entity& _entity, ComponentType _type);
 
-    auto query(const Signature& _signature) -> std::vector<Archetype*>;
+    template<typename T>
+    auto getComponent(const Entity&) -> T&;
+    auto getComponent(const Entity& _entity, ComponentType _type) -> void*;
+    
     template<typename... Components>
     auto query() -> std::vector<Archetype*>;
-
+    auto query(const Signature& _signature) -> std::vector<Archetype*>;
+    
 private:
     //HELPERS
 
@@ -99,19 +115,18 @@ private:
 
     //COMPONENTS-------------------------------------------------------------------------------------------------------------------
 
-    template<typename T> ComponentArray<T>* getComponentArray(Archetype* _archetype);
     template<typename T> void addComponentToArray(Archetype* _archetype, const T& _component);
+    template<typename T> void deleteComponentArray(ComponentArray<T>* _array);
     template<typename T> void removeComponentAt(Archetype* _archetype, size_t _index);
     template<typename... Components> void removeComponentsAt(Archetype* _archetype, size_t _index);
-    template<typename T> void deleteComponentArray(ComponentArray<T>* _array);
 
-    void cleanupComponentArrays(Archetype* _archetype);
-    sComponentArray* ensureComponentArray(Archetype* _target, ComponentType _type, sComponentArray* _source_array);
-    void transferComponents(Archetype* _source, size_t _source_index, Archetype* _target);
+    template<typename T>
+    auto hasComponent(const Entity& _entity) -> bool;
+    auto hasComponent(const Entity& _entity, ComponentType _type) -> bool;
+    void removeEntityAt(Archetype* _archetype, size_t _index) noexcept;
 
     //ENTITIES-----------------------------------------------------------------------------------------------------------------------
 
-    void removeEntityAt(Archetype* _archetype, size_t _index) noexcept;
     void updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) noexcept;
     void moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target);
     auto allocateEntity() -> Entity;
