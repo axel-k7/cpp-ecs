@@ -12,21 +12,22 @@
 
 constexpr size_t MAX_COMPONENTS = 64;
 using Signature = std::bitset<MAX_COMPONENTS>;
-using ComponentType  = uint32_t;
+using ComponentType = uint32_t;
 
 class Registry {
 public:
-    struct iComponentArray {
-        virtual ~iComponentArray() = default;
+    struct sComponentArray {
+        virtual ~sComponentArray() = default;
 
         virtual void swapElements(size_t _a, size_t _b) noexcept = 0;
-        virtual void moveElement(size_t _index, iComponentArray* _to) noexcept = 0;
+        virtual void moveElement(size_t _index, sComponentArray* _to) noexcept = 0;
         virtual void removeLast() noexcept = 0;
-        virtual auto cloneEmpty() const -> iComponentArray* = 0;
+        virtual void addFrom(void* _component) = 0;
+        virtual auto cloneEmpty() const -> sComponentArray* = 0;
     };
 
     template<typename T>
-    struct ComponentArray : iComponentArray {
+    struct ComponentArray : sComponentArray {
         std::vector<T> data;
         
         void add(const T& _component);
@@ -35,15 +36,16 @@ public:
         auto size() const -> size_t;
 
         void swapElements(size_t _a, size_t _b) override;
-        void moveElement(size_t _index, iComponentArray* _to) override;
+        void moveElement(size_t _index, sComponentArray* _to) override;
         void removeLast() override;
-        auto cloneEmpty() const -> iComponentArray* override;
+        void addFrom(void* _component) override;
+        auto cloneEmpty() const -> sComponentArray* override;
     };
 
     struct Archetype {
         Signature signature;
         std::vector<Entity> entities;
-        std::unordered_map<ComponentType, iComponentArray*> component_arrays; //could make array if keeping fixed size (prolly wont)
+        std::unordered_map<ComponentType, sComponentArray*> component_arrays; //could make array if keeping fixed size (prolly wont)
     };
 
     struct EntityRecord {
@@ -72,7 +74,7 @@ public:
     template<typename... Components>
     void destroyEntity(const Entity& _entity);
 
-    void addComponent(const Entity& _entity, ComponentType _type, iComponentArray* _component);
+    void addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component);
     template<typename T>
     void addComponent(const Entity& _entity, T _component);
 
@@ -104,7 +106,7 @@ private:
     template<typename T> void deleteComponentArray(ComponentArray<T>* _array);
 
     void cleanupComponentArrays(Archetype* _archetype);
-    iComponentArray* ensureComponentArray(Archetype* _target, ComponentType _type, iComponentArray* _source_array);
+    sComponentArray* ensureComponentArray(Archetype* _target, ComponentType _type, sComponentArray* _source_array);
     void transferComponents(Archetype* _source, size_t _source_index, Archetype* _target);
 
     //ENTITIES-----------------------------------------------------------------------------------------------------------------------

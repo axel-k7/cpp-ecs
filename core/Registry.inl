@@ -33,7 +33,7 @@ void Registry::ComponentArray<T>::swapElements(size_t _a, size_t _b) {
 }
 
 template<typename T>
-void Registry::ComponentArray<T>::moveElement(size_t _index, iComponentArray* _to) {
+void Registry::ComponentArray<T>::moveElement(size_t _index, sComponentArray* _to) {
     auto* other = static_cast<ComponentArray<T>*>(_to);
     other->data.push_back(std::move(data[_index]));
 }
@@ -44,7 +44,12 @@ void Registry::ComponentArray<T>::removeLast() {
 }
 
 template<typename T>
-Registry::iComponentArray* Registry::ComponentArray<T>::cloneEmpty() const {
+void Registry::ComponentArray<T>::addFrom(void* _component) {
+    add(*static_cast<T*>(_component));
+}
+
+template<typename T>
+Registry::sComponentArray* Registry::ComponentArray<T>::cloneEmpty() const {
     return new ComponentArray<T>();
 }
 

@@ -90,7 +90,7 @@ void Registry::destroyEntity(const Entity& _entity) {
 //COMPONENTS-------------------------------------------------------------------------------------------
 
 
-void Registry::addComponent(const Entity& _entity, ComponentType _type, iComponentArray* _component) {
+void Registry::addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component) {
     assert(isValidEntity(_entity));
 
     EntityRecord& record = records[_entity.id];
@@ -112,8 +112,8 @@ void Registry::addComponent(const Entity& _entity, ComponentType _type, iCompone
 
     record.signature = new_signature;
 
-    iComponentArray* array = ensureComponentArray(target_archetype, _type, _component);
-    array-> moveElement(0, array);
+    sComponentArray* array = ensureComponentArray(target_archetype, _type, _component);
+    array->addFrom(_component);
 }
 
 
@@ -191,10 +191,10 @@ void Registry::cleanupComponentArrays(Archetype* _archetype) {
 };
 
 
-Registry::iComponentArray* Registry::ensureComponentArray(Archetype* _target, ComponentType _type, iComponentArray* _source_array) {
+Registry::sComponentArray* Registry::ensureComponentArray(Archetype* _target, ComponentType _type, sComponentArray* _source_array) {
     auto it = _target->component_arrays.find(_type);
     if (it == _target->component_arrays.end()){
-        iComponentArray* new_array = _source_array->cloneEmpty();
+        sComponentArray* new_array = _source_array->cloneEmpty();
         _target->component_arrays[_type] = new_array;
         return new_array;
     }
@@ -205,7 +205,7 @@ Registry::iComponentArray* Registry::ensureComponentArray(Archetype* _target, Co
 void Registry::transferComponents(Archetype* _source, size_t _source_index, Archetype* _target) {
     for (auto& [type, source_array] : _source->component_arrays) {
         
-        iComponentArray* target_array = ensureComponentArray(_target, type, source_array);
+        sComponentArray* target_array = ensureComponentArray(_target, type, source_array);
         source_array->moveElement(_source_index, target_array);
     }
 };
