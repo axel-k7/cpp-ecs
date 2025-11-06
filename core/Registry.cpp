@@ -282,29 +282,6 @@ Registry::Archetype* Registry::getArchetype(const Signature& _signature) {
 //COMPONENTS-------------------------------------------------------------------------------------------------------------------
 
 
-void Registry::Archetype::cleanupComponentArrays() {
-    for (auto& [_, array] : component_arrays)
-        delete array;
-    component_arrays.clear();
-};
-
-
-auto Registry::Archetype::ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> Registry::sComponentArray* {
-    auto it = component_arrays.find(_type);
-    if (it == component_arrays.end()){
-        sComponentArray* new_array = _source_array->cloneEmpty();
-        component_arrays[_type] = new_array;
-        return new_array;
-    }
-    return it->second;
-};
-
-
-void Registry::Archetype::transferComponents(const Archetype* _source, size_t _source_index) {
-    for (auto& [type, source_array] : _source->component_arrays)
-        source_array->moveElement(_source_index, ensureComponentArray(type, source_array));
-};
-
 template<typename T>
 auto Registry::hasComponent(const Entity& _entity) -> bool {
     assert(isValidEntity(_entity));
@@ -390,3 +367,26 @@ auto Registry::Archetype::getArray() -> ComponentArray<T>* {
 
     return nullptr
 }
+
+void Registry::Archetype::cleanupComponentArrays() {
+    for (auto& [_, array] : component_arrays)
+        delete array;
+    component_arrays.clear();
+};
+
+
+auto Registry::Archetype::ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> Registry::sComponentArray* {
+    auto it = component_arrays.find(_type);
+    if (it == component_arrays.end()){
+        sComponentArray* new_array = _source_array->cloneEmpty();
+        component_arrays[_type] = new_array;
+        return new_array;
+    }
+    return it->second;
+};
+
+
+void Registry::Archetype::transferComponents(const Archetype* _source, size_t _source_index) {
+    for (auto& [type, source_array] : _source->component_arrays)
+        source_array->moveElement(_source_index, ensureComponentArray(type, source_array));
+};

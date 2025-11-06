@@ -107,11 +107,11 @@ private:
 
     //REGISTRY------------------------------------------------------------------------------------------------------------------------
 
-    const bool isValidEntity(const Entity& _entity);
+    auto isValidEntity(const Entity& _entity) -> const bool;
 
     template<typename T> static ComponentType getComponentTypeID();
 
-    Archetype* getArchetype(const Signature& _signature);
+    auto getArchetype(const Signature& _signature) -> Archetype*;
 
     //COMPONENTS-------------------------------------------------------------------------------------------------------------------
 
