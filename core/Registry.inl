@@ -18,7 +18,7 @@ void Registry::ComponentArray<T>::remove(size_t _index) {
 }
 
 template<typename T>
-T& Registry::ComponentArray<T>::get(size_t _index) {
+auto Registry::ComponentArray<T>::get(size_t _index) -> T& {
     return data[_index];
 }
 
@@ -67,8 +67,9 @@ void Registry::addComponentToArray(Archetype* _archetype, const T& _component) {
     auto* array = _archetype->getArray();
 
     if (!array) {
-        array = new ComponentArray<T>();
-        _archetype->component_arrays[getComponentTypeID<T>()] = array;
+        auto new_array = std::make_unique<ComponentArray<T>>();
+        array = new_array.get();
+        _archetype->component_arrays[getComponentTypeID<T>()] = std::move(new_array);
     }
 
     array->add(_component);

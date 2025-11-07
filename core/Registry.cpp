@@ -1,5 +1,11 @@
 #include "Registry.h"
 
+Registry::~Registry() {
+    signature_map.clear();
+    archetypes.clear();
+}
+
+
 //---------------------------------------------------------------------------------------------------------------------
 //ENTITY
 
@@ -34,8 +40,9 @@ auto Registry::createEntity(Components&&... _components) {
     (signature.set(getComponentTypeID<Components>()), ...);
     Entity entity = createEntity(signature);
 
-    Archetype* archetype = records[e.id].archetype;
+    Archetype* archetype = records[entity.id].archetype;
     (addComponentToArray<Components>(archetype, std::forward<Components>(_components)), ...);
+
     return entity;
 }
 
@@ -150,7 +157,7 @@ void Registry::addComponent(const Entity& _entity, const T _component) {
     
     record.signature = new_signature;
 
-    addComponentToArray(target_archetype, _component)
+    addComponentToArray(target_archetype, _component);
 }
 
 //ADD END-------------------------------------------------------------------------------------------
@@ -167,7 +174,7 @@ void Registry::removeComponent(const Entity& _entity, ComponentType _type) {
     Signature new_signature = record.signature;
     new_signature.set(_type, false);
 
-    Archetype* target = getArchetype(_type);
+    Archetype* target = getArchetype(new_signature);
     moveToArchetype(_entity, source, record.index, target);
 
     record.archetype = target;
@@ -181,13 +188,13 @@ void Registry::removeComponent(const Entity& _entity) {
     EntityRecord& record = records[_entity.id];
     Archetype* source = record.archetype;
     if (!source)
-        return
+        return;
 
     ComponentType type = getComponentTypeID<T>();
     Signature new_signature = record.signature;
     new_signature.set(type, false);
 
-    Archetype* target = getArchetype(target);
+    Archetype* target = getArchetype(new_signature);
     moveToArchetype(_entity, source, record.index, target);
 
     record.archetype = target;
@@ -218,6 +225,7 @@ auto Registry::getComponent(const Entity&) -> T& {
 
     EntityRecord& record = records[_entity.id];
     ComponentArray* array = record.archetype->getArray<T>();
+
     return array->get(record.index);
 } 
 
@@ -228,20 +236,29 @@ auto Registry::getComponent(const Entity&) -> T& {
 //QUERIES
 
     //query archetype of same bitmask
-auto Registry::query(const Signature& _signature) -> std::vector<Archetype*> {
+auto Registry::query(const Signature& _signature) const -> const std::vector<const Archetype*>& {
+    auto it = query_cache.find(_signature);
+    if (it != query_cache.end())
+        return it->second;
+
+
     std::vector<Archetype*> result;
-    for (Archetype* archetype : archetypes) 
+
+    for (const auto& archetype_ptr : archetypes) {
+        Archetype* archetype = archetype_ptr.get();
         if ((archetype->signature & _signature) == _signature)
             result.push_back(archetype);
-        
-    return result;     
+    }
+    
+    auto [_it, _] = query_cache.emplace(_signature, std::move(result));
+    return _it->second;
 }
 
     //get bitmask of components and query them
 template<typename... Components>
 auto Registry::query() -> std::vector<Archetype*> {
     Signature signature;
-    (signature.set(getComponentTypeID>Components>()), ...);
+    (signature.set(getComponentTypeID<Components>()), ...);
     return query(signature);
 }
 
@@ -249,7 +266,7 @@ auto Registry::query() -> std::vector<Archetype*> {
 
 //REGISTRY
 
-const bool Registry::isValidEntity(const Entity& _entity) {
+auto Registry::isValidEntity(const Entity& _entity) -> const bool {
     bool result = _entity.id < versions.size() && versions[_entity.id] == _entity.version; 
     assert(result && "invalid entity handle");
     return result;
@@ -257,8 +274,8 @@ const bool Registry::isValidEntity(const Entity& _entity) {
 
 
 template<typename T>
-static ComponentType Registry::getComponentTypeID() {
-    static ComponentType type_id = static_cast<ComponentType>(next_type_id++);
+auto Registry::getComponentTypeID() -> ComponentType {
+    ComponentType type_id = static_cast<ComponentType>(next_type_id++);
 
     static_assert(next_type_id < MAX_COMPONENTS, "max component limit reached");
 
@@ -271,11 +288,16 @@ Registry::Archetype* Registry::getArchetype(const Signature& _signature) {
     if (it != signature_map.end())
         return it->second;
         
-    Archetype* new_archetype = new Archetype();
+    std::unique_ptr<Archetype> new_archetype = std::make_unique<Archetype>();
     new_archetype->signature = _signature;
-    signature_map[_signature] = new_archetype;
-    archetypes.push_back(new_archetype);
-    return new_archetype;
+
+    Archetype* raw_archetype = new_archetype.get();
+    signature_map[_signature] = raw_archetype;
+
+    archetypes.push_back(std::move(new_archetype));
+
+    invalidateQueryCache();
+    return raw_archetype;
 }
 
 
@@ -355,6 +377,9 @@ auto Registry::allocateEntity() -> Entity {
     return Entity{ id, versions[id] };
 }
 
+void Registry::invalidateQueryCache() {
+    query_cache.clear();
+}
 
 //STRUCT STUFF
 
@@ -363,30 +388,31 @@ auto Registry::Archetype::getArray() -> ComponentArray<T>* {
     auto it = component_arrays.find(Registry::getComponentTypeID<T>());
 
     if (it != component_arrays.end())
-        return static_cast<ComponentArray<T>*>(it->second)
+        return static_cast<ComponentArray<T>*>(it->second);
 
-    return nullptr
+    return nullptr;
 }
-
-void Registry::Archetype::cleanupComponentArrays() {
-    for (auto& [_, array] : component_arrays)
-        delete array;
-    component_arrays.clear();
-};
 
 
 auto Registry::Archetype::ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> Registry::sComponentArray* {
     auto it = component_arrays.find(_type);
     if (it == component_arrays.end()){
-        sComponentArray* new_array = _source_array->cloneEmpty();
-        component_arrays[_type] = new_array;
-        return new_array;
+        std::unique_ptr<sComponentArray> new_array(_source_array->cloneEmpty());
+        auto [it, _] = component_arrays.emplace(_type, std::move(new_array));
+
+        return it->second.get();
     }
-    return it->second;
+
+    return it->second.get();
 };
 
 
 void Registry::Archetype::transferComponents(const Archetype* _source, size_t _source_index) {
-    for (auto& [type, source_array] : _source->component_arrays)
-        source_array->moveElement(_source_index, ensureComponentArray(type, source_array));
+    for (auto& [type, source_array] : _source->component_arrays) {
+        sComponentArray* target = ensureComponentArray(type, source_array.get());
+
+        assert(typeid(*source_array) == typeid(*target));
+
+        source_array->moveElement(_source_index, target);
+    }
 };

@@ -7,16 +7,26 @@
 #include <vector>
 #include <unordered_map>
 #include <cassert>
+#include <memory>
 
 #include "Entity.h"
 
 //probably change from this
 constexpr size_t MAX_COMPONENTS = 64;
-using Signature = std::bitset<MAX_COMPONENTS>;
 using ComponentType = uint32_t;
+
+using Signature = std::bitset<MAX_COMPONENTS>;
+struct SignatureHash {
+    std::size_t operator()(const Signature& _signature) const noexcept {
+        return std::hash<std::string>()(_signature.to_string());
+    }
+};
+
 
 class Registry {
 public:
+    ~Registry();
+
     struct sComponentArray {
         virtual ~sComponentArray() = default;
 
@@ -48,14 +58,13 @@ public:
     struct Archetype {
         Signature signature;
         std::vector<Entity> entities;
-        std::unordered_map<ComponentType, sComponentArray*> component_arrays; //could make array if keeping fixed size (prolly wont)
+        std::unordered_map<ComponentType, std::unique_ptr<sComponentArray>> component_arrays; //could make array if keeping fixed size (prolly wont)
 
         ~Archetype();
 
         template<typename T> auto getArray() -> ComponentArray<T>*;
 
         auto ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> sComponentArray*;
-        void cleanupComponentArrays();
         void transferComponents(const Archetype* _source, size_t _source_index);
     };
 
@@ -73,9 +82,11 @@ public:
     
     std::vector<uint32_t> versions;
     std::vector<EntityRecord> records;
-    std::vector<Archetype*> archetypes;
+    std::vector<std::unique_ptr<Archetype>> archetypes;
 
-    std::unordered_map<Signature, Archetype*> signature_map;
+    std::unordered_map<Signature, Archetype*, SignatureHash> signature_map;
+
+    mutable std::unordered_map<Signature, std::vector<const Archetype*>> query_cache;
 
     template<typename... Components>
     auto createEntity(Components&&... _components);
@@ -98,9 +109,13 @@ public:
     auto getComponent(const Entity&) -> T&;
     auto getComponent(const Entity& _entity, ComponentType _type) -> void*;
     
+    template<typename T>
+    auto hasComponent(const Entity& _entity) -> bool;
+    auto hasComponent(const Entity& _entity, ComponentType _type) -> bool;
+
     template<typename... Components>
     auto query() -> std::vector<Archetype*>;
-    auto query(const Signature& _signature) -> std::vector<Archetype*>;
+    auto query(const Signature& _signature) const -> const std::vector<const Archetype*>&;
     
 private:
     //HELPERS
@@ -109,7 +124,7 @@ private:
 
     auto isValidEntity(const Entity& _entity) -> const bool;
 
-    template<typename T> static ComponentType getComponentTypeID();
+    template<typename T> static auto getComponentTypeID() -> ComponentType;
 
     auto getArchetype(const Signature& _signature) -> Archetype*;
 
@@ -120,9 +135,6 @@ private:
     template<typename T> void removeComponentAt(Archetype* _archetype, size_t _index);
     template<typename... Components> void removeComponentsAt(Archetype* _archetype, size_t _index);
 
-    template<typename T>
-    auto hasComponent(const Entity& _entity) -> bool;
-    auto hasComponent(const Entity& _entity, ComponentType _type) -> bool;
     void removeEntityAt(Archetype* _archetype, size_t _index) noexcept;
 
     //ENTITIES-----------------------------------------------------------------------------------------------------------------------
@@ -130,4 +142,5 @@ private:
     void updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) noexcept;
     void moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target);
     auto allocateEntity() -> Entity;
+    void invalidateQueryCache();
 };
