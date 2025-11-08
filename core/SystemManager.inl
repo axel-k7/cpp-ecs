@@ -2,6 +2,8 @@
 
 template <typename T>
 void SystemManager::registerSystem(Registry* _registry) {
+    //should probably check if T is system 
+
     if (systems.find(typeid(T)) != systems.end()) {
         return;
     }

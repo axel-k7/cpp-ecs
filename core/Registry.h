@@ -23,14 +23,14 @@ class Registry {
 public:
     
     struct sComponentArray {
-    virtual ~sComponentArray() = default;
+        virtual ~sComponentArray() = default;
 
-    virtual void swapElements(size_t _a, size_t _b) noexcept = 0;
-    virtual void moveElement(size_t _index, sComponentArray* _to) noexcept = 0;
-    virtual void removeLast() noexcept = 0;
-    virtual void addFrom(void* _component) = 0;
-    virtual auto cloneEmpty() const -> sComponentArray* = 0;
-    virtual auto getRaw(size_t _index) -> void* = 0;
+        virtual void swapElements(size_t _a, size_t _b) noexcept = 0;
+        virtual void moveElement(size_t _index, sComponentArray* _to) noexcept = 0;
+        virtual void removeLast() noexcept = 0;
+        virtual void addFrom(void* _component) = 0;
+        virtual auto cloneEmpty() const -> sComponentArray* = 0;
+        virtual auto getRaw(size_t _index) -> void* = 0;
     };
 
 
@@ -72,11 +72,10 @@ public:
     };
 
 
-
     ~Registry();
 
     template<typename... Components> 
-    auto createEntity(Components&&... _components);
+    auto createEntity(Components&&... _components) -> Entity;
     auto createEntity() -> Entity;
     template<typename... Components> 
     void destroyEntity(const Entity& _entity);
@@ -91,6 +90,8 @@ public:
 
     auto entityExists(const Entity& _entity) -> const bool;
     
+    template<typename T> static auto getComponentTypeID() -> uint32_t;
+
 
     sEvent<Entity> onEntityCreated;
     sEvent<Entity> onEntityDestroyed;
@@ -124,16 +125,12 @@ private:
 
     //REGISTRY------------------------------------------------------------------------------------------------------------------------
 
-    template<typename T> static auto getComponentTypeID() -> uint32_t;
     auto getArchetype(const Signature& _signature) -> Archetype*;
     void invalidateQueryCache();
 
     //COMPONENTS-------------------------------------------------------------------------------------------------------------------
 
     template<typename T> void addComponentToArray(Archetype* _archetype, const T& _component);
-    template<typename T> void deleteComponentArray(ComponentArray<T>* _array);
-    template<typename T> void removeComponentAt(Archetype* _archetype, size_t _index);
-    template<typename... Components> void removeComponentsAt(Archetype* _archetype, size_t _index);
 
     //ENTITIES-----------------------------------------------------------------------------------------------------------------------
     

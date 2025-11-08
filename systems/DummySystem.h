@@ -20,15 +20,29 @@ public:
         }
     }
 
-    void setupListeners(Registry* _registry) override {
-        _registry->onEntityCreated.subscribe([this](Entity _entity) {
-            this->creationCallback(_entity);
-        });
 
-        _registry->onEntityDestroyed.subscribe([this](Entity _entity) {
+    void setupListeners(Registry* _registry) override {
+        _registry->onEntityCreated.subscribe(
+         [this](Entity _entity) {
+            this->creationCallback(_entity);
+         });
+
+        _registry->onEntityDestroyed.subscribe(
+        [this](Entity _entity) {
             this->destructionCallback(_entity);
         });
+
+        _registry->onComponentAdded[registry->getComponentTypeID<DummyComponent>()].subscribe
+        ([this](Entity _entity, uint32_t _type) {
+            this->additionCallback(_entity, _type);
+        });
+
+        _registry->onComponentRemoved[registry->getComponentTypeID<DummyComponent>()].subscribe
+        ([this](Entity _entity, uint32_t _type) {
+            this->removalCallback(_entity, _type);
+        });
     }
+
 
     void creationCallback(Entity _entity) override {
         if (registry->hasComponent<DummyComponent>(_entity)) 
@@ -39,4 +53,16 @@ public:
         if (registry->hasComponent<DummyComponent>(_entity))
             std::cout << "entity: " << _entity.id << " destroyed!!\n";
     }
+
+    void additionCallback(Entity _entity, uint32_t _component_type) override {
+        if (_component_type == registry->getComponentTypeID<DummyComponent>()) {
+            std::cout << "component: " << _component_type << " added to entity: " << _entity.id << "\n";
+        }
+    };
+
+    void removalCallback(Entity _entity, uint32_t _component_type) override {
+        if (_component_type == registry->getComponentTypeID<DummyComponent>()) {
+            std::cout << "component: " << _component_type << " removed from entity: " << _entity.id << "\n";
+        }
+    };
 };

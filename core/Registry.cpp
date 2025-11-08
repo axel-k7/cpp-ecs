@@ -22,7 +22,6 @@ auto Registry::createEntity() -> Entity {
 
 auto Registry::createEntity(const Signature& _signature) -> Entity {
     Entity entity = allocateEntity();
-    
     Archetype* archetype = getArchetype(_signature);
 
     size_t new_index = archetype->entities.size();
@@ -38,8 +37,8 @@ void Registry::destroyEntity(const Entity& _entity) {
     assert(entityExists(_entity));
     
     onEntityDestroyed.trigger(_entity);
-
     moveEntity(_entity, Signature{});
+
 
     invalidateEntity(_entity);
 };

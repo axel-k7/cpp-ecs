@@ -14,7 +14,11 @@ protected:
     Registry* registry = nullptr;
 
 private:
+    //Entity Callbacks
     virtual void creationCallback(Entity _entity) = 0;
     virtual void destructionCallback(Entity _entity) = 0;
-    //callbacks for component addition and destruction?
+    //Component Callbacks
+    virtual void additionCallback(Entity _entity, uint32_t _component_type) = 0;
+    virtual void removalCallback(Entity _entity, uint32_t _component_type) = 0;
+
 };

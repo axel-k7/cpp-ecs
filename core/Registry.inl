@@ -7,7 +7,7 @@
 
 
 template<typename... Components>
-auto Registry::createEntity(Components&&... _components) {
+auto Registry::createEntity(Components&&... _components) -> Entity {
     Signature signature;
     (signature.set(getComponentTypeID<Components>()), ...);
 
@@ -40,14 +40,10 @@ void Registry::destroyEntity(const Entity& _entity) {
 
 template<typename T>
 void Registry::addComponent(const Entity& _entity, const T _component) {
-    assert(entityExists(_entity));
+    ComponentArray<T> temp_array;
+    temp_array.add(_component);
 
-    Signature new_signature = records[_entity.id].signature;
-    new_signature.set(getComponentTypeID<T>(), true);
-    
-    Archetype* target = moveEntity(_entity, new_signature);
-
-    addComponentToArray(target, _component);
+    addComponent(_entity, getComponentTypeID<T>(), &temp_array);
 }
 
 
@@ -118,26 +114,6 @@ void Registry::addComponentToArray(Archetype* _archetype, const T& _component) {
     }
 
     array->add(_component);
-};
-
-template<typename T>
-void Registry::removeComponentAt(Archetype* _archetype, size_t _index) {
-    auto array = _archetype->getArray();
-
-    if (array)
-        array->remove(_index);
-};
-
-
-template<typename... Components>
-void Registry::removeComponentsAt(Archetype* _archetype, size_t _index) {
-    (removeComponentAt<Components>(_archetype, _index), ...);
-};
-
-
-template<typename T>
-void Registry::deleteComponentArray(ComponentArray<T>* _array) {
-    delete _array;
 };
 
 
