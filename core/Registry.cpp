@@ -1,4 +1,5 @@
 #include "Registry.h"
+#include "RegistryInternal.h"
 
 Registry::~Registry() {
     signature_map.clear();
@@ -14,13 +15,21 @@ auto Registry::createEntity() -> Entity {
     Entity entity = allocateEntity();
     moveEntity(entity, Signature{});
 
+    onEntityCreated.trigger(entity);
+
     return entity;
 };
 
 
 auto Registry::createEntity(const Signature& _signature) -> Entity {
     Entity entity = allocateEntity();
-    moveEntity(entity, _signature);
+    
+    Archetype* archetype = getArchetype(_signature);
+
+    size_t new_index = archetype->entities.size();
+    updateEntityRecord(entity, archetype, new_index);
+
+    onEntityCreated.trigger(entity);
 
     return entity;
 }
@@ -31,6 +40,8 @@ void Registry::destroyEntity(const Entity& _entity) {
     
     moveEntity(_entity, Signature{});
 
+    onEntityDestroyed.trigger(_entity);
+
     invalidateEntity(_entity);
 };
 
@@ -40,30 +51,37 @@ void Registry::destroyEntity(const Entity& _entity) {
 //COMPONENTS
 
 
-void Registry::addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component) {
+void Registry::addComponent(const Entity& _entity, uint32_t _type, sComponentArray* _component) {
     assert(entityExists(_entity));
 
     Signature new_signature = records[_entity.id].signature;
+    if (new_signature.test(_type))
+        return;
+
     new_signature.set(_type, true);
 
     Archetype* target = moveEntity(_entity, new_signature);
 
     sComponentArray* array = target->ensureComponentArray(_type, _component);
     array->addFrom(_component);
+
+    onComponentAdded.at(_type).trigger(_entity, _type);
 }
 
 
-void Registry::removeComponent(const Entity& _entity, ComponentType _type) {
+void Registry::removeComponent(const Entity& _entity, uint32_t _type) {
     assert(entityExists(_entity));
     
     Signature new_signature = records[_entity.id].signature;
     new_signature.set(_type, false);
 
     moveEntity(_entity, new_signature);
+
+    onComponentRemoved.at(_type).trigger(_entity, _type);
 }
 
 
-auto Registry::getComponent(const Entity& _entity, ComponentType _type) -> void* {
+auto Registry::getComponent(const Entity& _entity, uint32_t _type) -> void* {
     assert(entityExists(_entity));
 
     EntityRecord& record = records[_entity.id];
@@ -76,7 +94,7 @@ auto Registry::getComponent(const Entity& _entity, ComponentType _type) -> void*
 } 
 
 
-auto Registry::hasComponent(const Entity& _entity, ComponentType _type) -> bool {
+auto Registry::hasComponent(const Entity& _entity, uint32_t _type) -> bool {
     assert(entityExists(_entity));
 
     return records[_entity.id].signature.test(_type);
@@ -95,7 +113,7 @@ auto Registry::query(const Signature& _signature) const -> const std::vector<con
         return it->second;
 
 
-    std::vector<Archetype*> result;
+    std::vector<const Archetype*> result;
 
     for (const auto& archetype_ptr : archetypes) {
         Archetype* archetype = archetype_ptr.get();
@@ -157,7 +175,10 @@ void Registry::removeEntityAt(Archetype* _archetype, size_t _index) noexcept {
         records[last_entity.id].index = _index;
         
         for (auto& [_, array] : _archetype->component_arrays) {
-            array->swapElements(_index, last_index);
+            if (_index != last_index) 
+                array->swapElements(_index, last_index);
+            
+            array->removeLast();
         }
     }
 
@@ -243,28 +264,6 @@ void Registry::invalidateQueryCache() {
 //STRUCT METHODS
 
 
-auto Registry::Archetype::ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> Registry::sComponentArray* {
-    auto it = component_arrays.find(_type);
-    if (it == component_arrays.end()){
-        std::unique_ptr<sComponentArray> new_array(_source_array->cloneEmpty());
-        auto [it, _] = component_arrays.emplace(_type, std::move(new_array));
-
-        return it->second.get();
-    }
-
-    return it->second.get();
-};
-
-
-void Registry::Archetype::transferComponents(const Archetype* _source, size_t _source_index) {
-    for (auto& [type, source_array] : _source->component_arrays) {
-        sComponentArray* target = ensureComponentArray(type, source_array.get());
-
-        assert(typeid(*source_array) == typeid(*target));
-
-        source_array->moveElement(_source_index, target);
-    }
-};
 
 
 //STRUCT METHODS END
