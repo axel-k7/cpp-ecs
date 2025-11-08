@@ -37,9 +37,9 @@ auto Registry::createEntity(const Signature& _signature) -> Entity {
 void Registry::destroyEntity(const Entity& _entity) {
     assert(entityExists(_entity));
     
-    moveEntity(_entity, Signature{});
-
     onEntityDestroyed.trigger(_entity);
+
+    moveEntity(_entity, Signature{});
 
     invalidateEntity(_entity);
 };
@@ -64,7 +64,8 @@ void Registry::addComponent(const Entity& _entity, uint32_t _type, sComponentArr
     sComponentArray* array = target->ensureComponentArray(_type, _component);
     array->addFrom(_component);
 
-    onComponentAdded.at(_type).trigger(_entity, _type);
+    if (onComponentAdded.count(_type))
+        onComponentAdded.at(_type).trigger(_entity, _type);
 }
 
 
@@ -76,7 +77,8 @@ void Registry::removeComponent(const Entity& _entity, uint32_t _type) {
 
     moveEntity(_entity, new_signature);
 
-    onComponentRemoved.at(_type).trigger(_entity, _type);
+    if (onComponentRemoved.count(_type))
+        onComponentRemoved.at(_type).trigger(_entity, _type);
 }
 
 

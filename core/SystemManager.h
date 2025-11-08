@@ -16,6 +16,7 @@ public:
 
 private:
     std::unordered_map<std::type_index, std::unique_ptr<System>> systems;
+
 };
 
 #include "SystemManager.inl"

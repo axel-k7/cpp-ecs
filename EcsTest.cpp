@@ -16,10 +16,16 @@ int main() {
     
     Entity e1 = registry.createEntity(DummyComponent{});
     Entity e2 = registry.createEntity(DummyComponent{});
-
     Entity e3 = registry.createEntity();
 
+    registry.removeComponent<DummyComponent>(e2);
     sys_manager.update(0.f);
+
+    registry.destroyEntity<Entity>(e1);
+    registry.destroyEntity<Entity>(e2);
+    registry.destroyEntity<Entity>(e3);
     
+    sys_manager.update(0.f);
+
     return 0;
 }

@@ -9,6 +9,8 @@ void SystemManager::registerSystem(Registry* _registry) {
     std::unique_ptr<T> new_system = std::make_unique<T>();
     new_system->setRegistry(_registry);
 
+    new_system->setupListeners(_registry);
+
     systems[typeid(T)] = std::move(new_system);
 };
 
