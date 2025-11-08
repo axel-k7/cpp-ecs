@@ -9,15 +9,10 @@ Registry::~Registry() {
 //---------------------------------------------------------------------------------------------------------------------
 //ENTITY
 
-//CREATION------------------------------------------------------------------------------------------
-
 
 auto Registry::createEntity() -> Entity {
     Entity entity = allocateEntity();
-    Archetype* empty = getArchetype(Signature{});
-
-    empty->entities.push_back(entity);
-    records[entity.id] = {empty, (uint32_t)(empty->entities.size() - 1), {}};
+    moveEntity(entity, Signature{});
 
     return entity;
 };
@@ -25,190 +20,51 @@ auto Registry::createEntity() -> Entity {
 
 auto Registry::createEntity(const Signature& _signature) -> Entity {
     Entity entity = allocateEntity();
-    Archetype* target = getArchetype(_signature);
-
-    target->entities.push_back(entity);
-    records[entity.id] = {target, (uint32_t)(target->entities.size() - 1), _signature};
+    moveEntity(entity, _signature);
 
     return entity;
 }
-
-
-template<typename... Components>
-auto Registry::createEntity(Components&&... _components) {
-    Signature signature;
-    (signature.set(getComponentTypeID<Components>()), ...);
-    Entity entity = createEntity(signature);
-
-    Archetype* archetype = records[entity.id].archetype;
-    (addComponentToArray<Components>(archetype, std::forward<Components>(_components)), ...);
-
-    return entity;
-}
-
-
-//CREATION END-----------------------------------------------------------------------------------------
-//DESTRUCTION------------------------------------------------------------------------------------------
 
 
 void Registry::destroyEntity(const Entity& _entity) {
-    assert(isValidEntity(_entity));
-    EntityRecord& record = records[_entity.id];
+    assert(entityExists(_entity));
     
-    Archetype* archetype = record.archetype;
-    if (!archetype)
-        return;
+    moveEntity(_entity, Signature{});
 
-    removeEntityAt(archetype, record.index);
-
-    for (auto& [_, array] : archetype->component_arrays) {
-        array->removeLast();
-    }
-
-    //invalidate version handle and reset record
-    versions[_entity.id]++;
-    record.archetype = nullptr;
-    record.index = 0;
-    record.signature.reset();
-
-    free_ids.push_back(_entity.id);
+    invalidateEntity(_entity);
 };
 
-
-template<typename... Components>
-void Registry::destroyEntity(const Entity& _entity) {
-    assert(isValidEntity(_entity));
-
-    EntityRecord& record = records[_entity.id];
-    Archetype* archetype = record.archetype;
-    if (!archetype)
-        return;
-
-    size_t index = record.index;
-
-    (removeComponentAt<Components>(archetype, index), ...);
-    (record.signature.reset(getComponentTypeID<Components>()), ...);
-    archetype->signature = record.signature;
-
-    Archetype* new_archetype = getArchetype(record.signature);
-    if (new_archetype != archetype) {
-        moveToArchetype(_entity, archetype, index, new_archetype);
-    }
-};
-
-//DESTRUCTION END--------------------------------------------------------------------------------------
 
 //ENTITY END
 //---------------------------------------------------------------------------------------------------------------------
 //COMPONENTS
 
-//ADD-------------------------------------------------------------------------------------------
-
 
 void Registry::addComponent(const Entity& _entity, ComponentType _type, sComponentArray* _component) {
-    assert(isValidEntity(_entity));
+    assert(entityExists(_entity));
 
-    EntityRecord& record = records[_entity.id];
-    Signature new_signature = record.signature;
+    Signature new_signature = records[_entity.id].signature;
     new_signature.set(_type, true);
 
-    Archetype* target_archetype = getArchetype(new_signature);
-    Archetype* prev_archetype = record.archetype;
-    size_t prev_index = record.index;
+    Archetype* target = moveEntity(_entity, new_signature);
 
-    if (prev_archetype != target_archetype && prev_archetype) {
-        moveToArchetype(_entity, prev_archetype, prev_index, target_archetype);
-    }
-    else if (!prev_archetype) {
-        record.index = target_archetype->entities.size();
-        target_archetype->entities.push_back(_entity);
-        record.archetype = target_archetype;
-    }
-
-    record.signature = new_signature;
-
-    sComponentArray* array = record.archetype->ensureComponentArray(_type, _component);
+    sComponentArray* array = target->ensureComponentArray(_type, _component);
     array->addFrom(_component);
 }
 
 
-template<typename T>
-void Registry::addComponent(const Entity& _entity, const T _component) {
-    assert(isValidEntity(_entity));
-
-    EntityRecord& record = records[_entity.id];
-    Signature new_signature = record.signature;
-    new_signature.set(getComponentTypeID<T>(), true);
-    
-
-    Archetype* target_archetype = getArchetype(new_signature);
-    Archetype* prev_archetype = record.archetype;
-    size_t prev_index = record.index;
-
-    if (prev_archetype) {
-        moveToArchetype(_entity, prev_archetype, prev_index, target_archetype);
-    } 
-    else if (!prev_archetype) {
-        record.index = target_archetype->entities.size();
-        target_archetype->entities.push_back(_entity);
-        record.archetype = target_archetype;
-    }
-
-    
-    record.signature = new_signature;
-
-    addComponentToArray(target_archetype, _component);
-}
-
-//ADD END-------------------------------------------------------------------------------------------
-//REMOVE--------------------------------------------------------------------------------------------
-
 void Registry::removeComponent(const Entity& _entity, ComponentType _type) {
-    assert(isValidEntity(_entity));
-
-    EntityRecord& record = records[_entity.id];
-    Archetype* source = record.archetype;
-    if (!source)
-        return;
+    assert(entityExists(_entity));
     
-    Signature new_signature = record.signature;
+    Signature new_signature = records[_entity.id].signature;
     new_signature.set(_type, false);
 
-    Archetype* target = getArchetype(new_signature);
-    moveToArchetype(_entity, source, record.index, target);
-
-    record.archetype = target;
-    record.signature = new_signature;
+    moveEntity(_entity, new_signature);
 }
-
-template<typename T>
-void Registry::removeComponent(const Entity& _entity) {
-    assert(isValidEntity(_entity));
-
-    EntityRecord& record = records[_entity.id];
-    Archetype* source = record.archetype;
-    if (!source)
-        return;
-
-    ComponentType type = getComponentTypeID<T>();
-    Signature new_signature = record.signature;
-    new_signature.set(type, false);
-
-    Archetype* target = getArchetype(new_signature);
-    moveToArchetype(_entity, source, record.index, target);
-
-    record.archetype = target;
-    record.signature = new_signature;
-}
-
-
-
-//REMOVE END----------------------------------------------------------------------------------------
-//GET-----------------------------------------------------------------------------------------------
 
 
 auto Registry::getComponent(const Entity& _entity, ComponentType _type) -> void* {
-    assert(isValidEntity(_entity));
+    assert(entityExists(_entity));
 
     EntityRecord& record = records[_entity.id];
     auto it = record.archetype->component_arrays.find(_type);
@@ -219,21 +75,18 @@ auto Registry::getComponent(const Entity& _entity, ComponentType _type) -> void*
     return it->second->getRaw(record.index);
 } 
 
-template<typename T>
-auto Registry::getComponent(const Entity&) -> T& {
-    assert(isValidEntity(_entity));
 
-    EntityRecord& record = records[_entity.id];
-    ComponentArray* array = record.archetype->getArray<T>();
+auto Registry::hasComponent(const Entity& _entity, ComponentType _type) -> bool {
+    assert(entityExists(_entity));
 
-    return array->get(record.index);
-} 
+    return records[_entity.id].signature.test(_type);
+}
 
-//GET END-------------------------------------------------------------------------------------------
 
 //COMPONENTS END
 //---------------------------------------------------------------------------------------------------------------------
 //QUERIES
+
 
     //query archetype of same bitmask
 auto Registry::query(const Signature& _signature) const -> const std::vector<const Archetype*>& {
@@ -254,71 +107,45 @@ auto Registry::query(const Signature& _signature) const -> const std::vector<con
     return _it->second;
 }
 
-    //get bitmask of components and query them
-template<typename... Components>
-auto Registry::query() -> std::vector<Archetype*> {
-    Signature signature;
-    (signature.set(getComponentTypeID<Components>()), ...);
-    return query(signature);
-}
 
-//HELPERS -------------------------------------------------------------------------------------------------------------------------
+//QUERIES END
+//---------------------------------------------------------------------------------------------------------------------
+//ENTITY HELPERS
 
-//REGISTRY
+auto Registry::moveEntity(Entity _entity, const Signature& _new_signature) -> Archetype* {
+    EntityRecord& record = records[_entity.id];
+    Archetype* curr_archetype = record.archetype;
+    Archetype* target_archetype = getArchetype(_new_signature);
 
-auto Registry::isValidEntity(const Entity& _entity) -> const bool {
-    bool result = _entity.id < versions.size() && versions[_entity.id] == _entity.version; 
-    assert(result && "invalid entity handle");
-    return result;
-}
+    if (curr_archetype != target_archetype && curr_archetype) {
+        moveToArchetype(_entity, curr_archetype, record.index, target_archetype);
+    }
+    else if (!curr_archetype) {
+        record.index = target_archetype->entities.size();
+        target_archetype->entities.push_back(_entity);
+        record.archetype = target_archetype;
+    }
 
-
-template<typename T>
-auto Registry::getComponentTypeID() -> ComponentType {
-    ComponentType type_id = static_cast<ComponentType>(next_type_id++);
-
-    static_assert(next_type_id < MAX_COMPONENTS, "max component limit reached");
-
-    return type_id;
-}
-
-
-Registry::Archetype* Registry::getArchetype(const Signature& _signature) {
-    auto it = signature_map.find(_signature);
-    if (it != signature_map.end())
-        return it->second;
-        
-    std::unique_ptr<Archetype> new_archetype = std::make_unique<Archetype>();
-    new_archetype->signature = _signature;
-
-    Archetype* raw_archetype = new_archetype.get();
-    signature_map[_signature] = raw_archetype;
-
-    archetypes.push_back(std::move(new_archetype));
+    record.signature = _new_signature;
 
     invalidateQueryCache();
-    return raw_archetype;
+
+    return target_archetype;
 }
 
 
-//COMPONENTS-------------------------------------------------------------------------------------------------------------------
+void Registry::invalidateEntity(const Entity& _entity) {
+    assert(entityExists(_entity));
 
+    EntityRecord& record = records[_entity.id];
+    record.archetype = nullptr;
+    record.index = 0;
+    record.signature.reset();
+    versions[_entity.id]++;
 
-template<typename T>
-auto Registry::hasComponent(const Entity& _entity) -> bool {
-    assert(isValidEntity(_entity));
-    const auto& record = records[_entity.id];
-    return record.signature.test(getComponentTypeID<T>());
+    free_ids.push_back(_entity.id);
+    invalidateQueryCache();
 }
-
-
-auto Registry::hasComponent(const Entity& _entity, ComponentType _type) -> bool {
-    assert(isValidEntity(_entity));
-    return records[_entity.id].signature.test(_type);
-}
-
-
-//ENTITIES-----------------------------------------------------------------------
 
 
 void Registry::removeEntityAt(Archetype* _archetype, size_t _index) noexcept {
@@ -347,13 +174,13 @@ void Registry::updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_i
 
 
 void Registry::moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target) noexcept {
-    if (_source == _target || !isValidEntity(_entity))
+    if (_source == _target || !entityExists(_entity))
         return;
     
     size_t new_index = _target->entities.size();
     _target->entities.push_back(_entity);
 
-    _source->transferComponents(_target, _source_index);
+    _target->transferComponents(_source, _source_index);
 
     removeEntityAt(_source, _source_index);
 
@@ -377,21 +204,43 @@ auto Registry::allocateEntity() -> Entity {
     return Entity{ id, versions[id] };
 }
 
+//ENTITY HELPERS END
+//---------------------------------------------------------------------------------------------------------------------
+//REGISTRY HELPERS
+
+auto Registry::entityExists(const Entity& _entity) -> const bool {
+    bool result = _entity.id < versions.size() && versions[_entity.id] == _entity.version; 
+    return result;
+}
+
+
+auto Registry::getArchetype(const Signature& _signature) -> Archetype* {
+    auto it = signature_map.find(_signature);
+    if (it != signature_map.end())
+        return it->second;
+        
+    std::unique_ptr<Archetype> new_archetype = std::make_unique<Archetype>();
+    new_archetype->signature = _signature;
+
+    Archetype* raw_archetype = new_archetype.get();
+    signature_map[_signature] = raw_archetype;
+
+    archetypes.push_back(std::move(new_archetype));
+
+    invalidateQueryCache();
+    return raw_archetype;
+}
+
+
 void Registry::invalidateQueryCache() {
     query_cache.clear();
+    //could maybe track which signatures have have changed and just invalidate those
 }
 
-//STRUCT STUFF
 
-template<typename T>
-auto Registry::Archetype::getArray() -> ComponentArray<T>* {
-    auto it = component_arrays.find(Registry::getComponentTypeID<T>());
-
-    if (it != component_arrays.end())
-        return static_cast<ComponentArray<T>*>(it->second);
-
-    return nullptr;
-}
+//REGISTRY HELPERS END
+//---------------------------------------------------------------------------------------------------------------------
+//STRUCT METHODS
 
 
 auto Registry::Archetype::ensureComponentArray(ComponentType _type, sComponentArray* _source_array) -> Registry::sComponentArray* {
@@ -416,3 +265,6 @@ void Registry::Archetype::transferComponents(const Archetype* _source, size_t _s
         source_array->moveElement(_source_index, target);
     }
 };
+
+
+//STRUCT METHODS END

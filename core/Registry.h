@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "Entity.h"
+#include "event/Event.h"
 
 //probably change from this
 constexpr size_t MAX_COMPONENTS = 64;
@@ -25,7 +26,6 @@ struct SignatureHash {
 
 class Registry {
 public:
-    ~Registry();
 
     struct sComponentArray {
         virtual ~sComponentArray() = default;
@@ -75,18 +75,7 @@ public:
         Signature signature;
     };
 
-    static inline uint32_t next_type_id = 0; //should change if multithreading
-
-    uint32_t next_id;
-    std::vector<uint32_t> free_ids; // = free_ids.reserve(max entity count);
-    
-    std::vector<uint32_t> versions;
-    std::vector<EntityRecord> records;
-    std::vector<std::unique_ptr<Archetype>> archetypes;
-
-    std::unordered_map<Signature, Archetype*, SignatureHash> signature_map;
-
-    mutable std::unordered_map<Signature, std::vector<const Archetype*>> query_cache;
+    ~Registry();
 
     template<typename... Components>
     auto createEntity(Components&&... _components);
@@ -116,17 +105,33 @@ public:
     template<typename... Components>
     auto query() -> std::vector<Archetype*>;
     auto query(const Signature& _signature) const -> const std::vector<const Archetype*>&;
-    
-private:
-    //HELPERS
 
+    auto entityExists(const Entity& _entity) -> const bool;
+    
+
+    sEvent<Entity> onEntityCreated;
+    sEvent<Entity> onEntityDestroyed;
+    //components too, cant use template in declaration
+
+    static inline uint32_t next_type_id = 0; //should change if multithreading
+
+    uint32_t next_id;
+    std::vector<uint32_t> free_ids; // = free_ids.reserve(max entity count);
+    
+    std::vector<uint32_t> versions;
+    std::vector<EntityRecord> records;
+    std::vector<std::unique_ptr<Archetype>> archetypes;
+
+    std::unordered_map<Signature, Archetype*, SignatureHash> signature_map;
+
+    mutable std::unordered_map<Signature, std::vector<const Archetype*>> query_cache;
+
+private:
     //REGISTRY------------------------------------------------------------------------------------------------------------------------
 
-    auto isValidEntity(const Entity& _entity) -> const bool;
-
     template<typename T> static auto getComponentTypeID() -> ComponentType;
-
     auto getArchetype(const Signature& _signature) -> Archetype*;
+    void invalidateQueryCache();
 
     //COMPONENTS-------------------------------------------------------------------------------------------------------------------
 
@@ -135,12 +140,12 @@ private:
     template<typename T> void removeComponentAt(Archetype* _archetype, size_t _index);
     template<typename... Components> void removeComponentsAt(Archetype* _archetype, size_t _index);
 
-    void removeEntityAt(Archetype* _archetype, size_t _index) noexcept;
-
     //ENTITIES-----------------------------------------------------------------------------------------------------------------------
-
+    
+    auto moveEntity(Entity _entity, const Signature& _new_signature) -> Archetype*;
+    void invalidateEntity(const Entity& _entity);
+    void removeEntityAt(Archetype* _archetype, size_t _index) noexcept;
     void updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) noexcept;
     void moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target);
     auto allocateEntity() -> Entity;
-    void invalidateQueryCache();
 };
