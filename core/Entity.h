@@ -6,11 +6,11 @@ struct Entity {
     uint32_t id;
     uint32_t version;
 
-    bool operator==(const Entity& _other) {
+    bool operator==(const Entity& _other) const {
         return id == _other.id && version == _other.version;
     }
 
-    bool operator!=(const Entity& _other) {
+    bool operator!=(const Entity& _other) const {
         return !(*this == _other);
     }
 

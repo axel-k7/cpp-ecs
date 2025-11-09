@@ -26,12 +26,6 @@ auto Registry::createEntity(Components&&... _components) -> Entity {
     return entity;
 }
 
-//ignores template arguments, it's just like this for api consistency
-template<typename... Components>
-void Registry::destroyEntity(const Entity& _entity) {
-    destroyEntity(_entity);
-};
-
 
 //ENTITY END
 //---------------------------------------------------------------------------------------------------------------------
@@ -39,11 +33,27 @@ void Registry::destroyEntity(const Entity& _entity) {
 
 
 template<typename T>
-void Registry::addComponent(const Entity& _entity, const T _component) {
-    ComponentArray<T> temp_array;
-    temp_array.add(_component);
-
-    addComponent(_entity, getComponentTypeID<T>(), &temp_array);
+void Registry::addComponent(const Entity& _entity, const T& _component) {
+    uint32_t type = getComponentTypeID<T>();
+    Signature new_signature = records[_entity.id].signature;
+    if (new_signature.test(type))
+        return;
+    
+    new_signature.set(type, true);
+    
+    Archetype* target = moveEntity(_entity, new_signature);
+    
+    sComponentArray* array = target->getArray<T>();
+    if (!array) {
+        auto new_array = std::make_unique<ComponentArray<T>>();
+        array = new_array.get();
+        target->component_arrays[type] = std::move(new_array);
+    }
+    
+    array->addFrom((void*)&_component);
+    
+    if (onComponentAdded.count(type))
+        onComponentAdded.at(type).trigger(_entity, type);
 }
 
 
@@ -154,13 +164,14 @@ size_t Registry::ComponentArray<T>::size() const {
 }
 
 template<typename T>
-void Registry::ComponentArray<T>::swapElements(size_t _a, size_t _b) noexcept {
+void Registry::ComponentArray<T>::swapElements(size_t _a, size_t _b) {
     std::swap(data[_a], data[_b]);
 }
 
 template<typename T>
-void Registry::ComponentArray<T>::moveElement(size_t _index, sComponentArray* _to) noexcept {
+void Registry::ComponentArray<T>::moveElement(size_t _index, sComponentArray* _to) {
     auto* other = static_cast<ComponentArray<T>*>(_to);
+
     other->data.push_back(std::move(data[_index]));
 
     size_t last = data.size() -1;
@@ -171,7 +182,7 @@ void Registry::ComponentArray<T>::moveElement(size_t _index, sComponentArray* _t
 }
 
 template<typename T>
-void Registry::ComponentArray<T>::removeLast() noexcept {
+void Registry::ComponentArray<T>::removeLast() {
     data.pop_back();
 }
 
@@ -179,7 +190,6 @@ template<typename T>
 void Registry::ComponentArray<T>::addFrom(void* _component) {
     add(*static_cast<T*>(_component));
 }
-
 
 template<typename T>
 auto Registry::ComponentArray<T>::getRaw(size_t _index) -> void* {

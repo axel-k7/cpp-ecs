@@ -26,17 +26,17 @@ public:
          [this](Entity _entity) {
             this->creationCallback(_entity);
          });
-
+        
         _registry->onEntityDestroyed.subscribe(
         [this](Entity _entity) {
             this->destructionCallback(_entity);
         });
-
+        
         _registry->onComponentAdded[registry->getComponentTypeID<DummyComponent>()].subscribe
         ([this](Entity _entity, uint32_t _type) {
             this->additionCallback(_entity, _type);
         });
-
+        
         _registry->onComponentRemoved[registry->getComponentTypeID<DummyComponent>()].subscribe
         ([this](Entity _entity, uint32_t _type) {
             this->removalCallback(_entity, _type);
@@ -45,18 +45,23 @@ public:
 
 
     void creationCallback(Entity _entity) override {
-        if (registry->hasComponent<DummyComponent>(_entity)) 
-            std::cout << "entity: " << _entity.id << " added!!\n";
+        if (registry->hasComponent<DummyComponent>(_entity)) {
+            DummyComponent& component_data = registry->getComponent<DummyComponent>(_entity);
+            std::cout << "entity: " << _entity.id << " added, " << component_data.dummy_quote;
+        }
     }
 
     void destructionCallback(Entity _entity) override {
-        if (registry->hasComponent<DummyComponent>(_entity))
-            std::cout << "entity: " << _entity.id << " destroyed!!\n";
+        if (registry->hasComponent<DummyComponent>(_entity)) {
+           std::cout << "entity: " << _entity.id << " destroyed!" << "\n";
+        }
+
     }
 
     void additionCallback(Entity _entity, uint32_t _component_type) override {
         if (_component_type == registry->getComponentTypeID<DummyComponent>()) {
-            std::cout << "component: " << _component_type << " added to entity: " << _entity.id << "\n";
+            DummyComponent& component_data = registry->getComponent<DummyComponent>(_entity);
+            std::cout << "component: " << _component_type << " added to entity: " << _entity.id << ", " << component_data.dummy_quote;
         }
     };
 

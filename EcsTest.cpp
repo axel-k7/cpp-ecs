@@ -22,8 +22,8 @@ int main() {
 
     sys_manager.update(0.f);
 
-    registry.destroyEntity<Entity>(e1);
-    registry.destroyEntity<Entity>(e2);
+    registry.destroyEntity(e1);
+    registry.destroyEntity(e2);
     
     sys_manager.update(0.f);
 

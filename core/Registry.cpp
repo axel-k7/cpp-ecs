@@ -35,10 +35,10 @@ auto Registry::createEntity(const Signature& _signature) -> Entity {
 
 void Registry::destroyEntity(const Entity& _entity) {
     assert(entityExists(_entity));
-    
-    onEntityDestroyed.trigger(_entity);
-    moveEntity(_entity, Signature{});
 
+    onEntityDestroyed.trigger(_entity);
+
+    moveEntity(_entity, Signature{});
 
     invalidateEntity(_entity);
 };
@@ -72,12 +72,15 @@ void Registry::removeComponent(const Entity& _entity, uint32_t _type) {
     assert(entityExists(_entity));
     
     Signature new_signature = records[_entity.id].signature;
-    new_signature.set(_type, false);
-
-    moveEntity(_entity, new_signature);
+    
+    if (!new_signature.test(_type))
+        return;
 
     if (onComponentRemoved.count(_type))
         onComponentRemoved.at(_type).trigger(_entity, _type);
+    
+    new_signature.set(_type, false);
+    moveEntity(_entity, new_signature);
 }
 
 
@@ -135,10 +138,13 @@ auto Registry::moveEntity(Entity _entity, const Signature& _new_signature) -> Ar
     Archetype* curr_archetype = record.archetype;
     Archetype* target_archetype = getArchetype(_new_signature);
 
+    if (curr_archetype == target_archetype)
+        return target_archetype;
+
     if (curr_archetype != target_archetype && curr_archetype) {
         moveToArchetype(_entity, curr_archetype, record.index, target_archetype);
     }
-    else if (!curr_archetype) {
+    else {
         record.index = target_archetype->entities.size();
         target_archetype->entities.push_back(_entity);
         record.archetype = target_archetype;
@@ -156,6 +162,7 @@ void Registry::invalidateEntity(const Entity& _entity) {
     assert(entityExists(_entity));
 
     EntityRecord& record = records[_entity.id];
+
     record.archetype = nullptr;
     record.index = 0;
     record.signature.reset();
@@ -166,7 +173,7 @@ void Registry::invalidateEntity(const Entity& _entity) {
 }
 
 
-void Registry::removeEntityAt(Archetype* _archetype, size_t _index) noexcept {
+void Registry::removeEntityAt(Archetype* _archetype, size_t _index) {
     size_t last_index = _archetype->entities.size()-1;
 
     if (_index != last_index) {
@@ -182,11 +189,12 @@ void Registry::removeEntityAt(Archetype* _archetype, size_t _index) noexcept {
         }
     }
 
+
     _archetype->entities.pop_back();
 };
 
 
-void Registry::updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) noexcept {
+void Registry::updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) {
     auto& record = records[_entity.id];
     record.archetype = _new;
     record.index = _new_index;
@@ -194,7 +202,7 @@ void Registry::updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_i
 };
 
 
-void Registry::moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target) noexcept {
+void Registry::moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target) {
     if (_source == _target || !entityExists(_entity))
         return;
     
@@ -282,7 +290,6 @@ void Registry::Archetype::transferComponents(const Archetype* _source, size_t _s
             sComponentArray* target = ensureComponentArray(type, source_array.get());
             source_array->moveElement(_source_index, target);
         }
-        
     }
 };
 

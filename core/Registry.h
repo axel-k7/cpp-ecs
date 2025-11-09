@@ -14,9 +14,9 @@ constexpr size_t MAX_COMPONENTS = 64;
 using Signature = std::bitset<MAX_COMPONENTS>;
 
 struct SignatureHash {
-    std::size_t operator()(const Signature& _signature) const noexcept {
+    std::size_t operator()(const Signature& _signature) const {
         return std::hash<std::string>()(_signature.to_string());
-    }
+    } //to string is inefficient
 };
 
 class Registry {
@@ -25,9 +25,9 @@ public:
     struct sComponentArray {
         virtual ~sComponentArray() = default;
 
-        virtual void swapElements(size_t _a, size_t _b) noexcept = 0;
-        virtual void moveElement(size_t _index, sComponentArray* _to) noexcept = 0;
-        virtual void removeLast() noexcept = 0;
+        virtual void swapElements(size_t _a, size_t _b) = 0;
+        virtual void moveElement(size_t _index, sComponentArray* _to) = 0;
+        virtual void removeLast() = 0;
         virtual void addFrom(void* _component) = 0;
         virtual auto cloneEmpty() const -> sComponentArray* = 0;
         virtual auto getRaw(size_t _index) -> void* = 0;
@@ -43,9 +43,9 @@ public:
         auto get(size_t _index) -> T&;
         auto size() const -> size_t;
 
-        void swapElements(size_t _a, size_t _b) noexcept override;
-        void moveElement(size_t _index, sComponentArray* _to) noexcept override;
-        void removeLast() noexcept override;
+        void swapElements(size_t _a, size_t _b) override;
+        void moveElement(size_t _index, sComponentArray* _to) override;
+        void removeLast() override;
         void addFrom(void* _component) override;
         auto cloneEmpty() const -> sComponentArray* override;
         auto getRaw(size_t _index) -> void* override;
@@ -74,24 +74,45 @@ public:
 
     ~Registry();
 
+    //ENTITY MANAGEMENT-----------------------------------------------------------------
+
     template<typename... Components> 
     auto createEntity(Components&&... _components) -> Entity;
+    auto createEntity(const Signature& _signature) -> Entity;
     auto createEntity() -> Entity;
-    template<typename... Components> 
+
     void destroyEntity(const Entity& _entity);
 
-    template<typename T> void addComponent(const Entity& _entity, T _component);
-    template<typename T> void removeComponent(const Entity& _entity);
-    template<typename T> auto getComponent(const Entity&) -> T&;
-    template<typename T> auto hasComponent(const Entity& _entity) -> bool;
+    //COMPONENT MANAGEMENT-----------------------------------------------------------------
+
+    template<typename T>
+    void addComponent(const Entity& _entity, const T& _component);
+    void addComponent(const Entity& _entity, uint32_t _type, sComponentArray* _component);
+
+    template<typename T>
+    void removeComponent(const Entity& _entity);
+    void removeComponent(const Entity& _entity, uint32_t _type);
+
+    template<typename T>
+    auto getComponent(const Entity&) -> T&;
+    auto getComponent(const Entity& _entity, uint32_t _type) -> void*;
+
+    template<typename T>
+    auto hasComponent(const Entity& _entity) -> bool;
+    auto hasComponent(const Entity& _entity, uint32_t _type) -> bool;
+
+    //QUERYING--------------------------------------------------------------------------------
 
     template<typename... Components> 
     auto query() const-> const std::vector<const Archetype*>&;
+    auto query(const Signature& _signature) const -> const std::vector<const Archetype*>&;
+
+    //HELPERS---------------------------------------------------------------------------------
 
     auto entityExists(const Entity& _entity) -> const bool;
-    
     template<typename T> static auto getComponentTypeID() -> uint32_t;
 
+    //MEMBERS---------------------------------------------------------------------------------
 
     sEvent<Entity> onEntityCreated;
     sEvent<Entity> onEntityDestroyed;
@@ -112,34 +133,20 @@ public:
     mutable std::unordered_map<Signature, std::vector<const Archetype*>> query_cache;
 
 private:
-    
-    //INTERNAL DYNAMIC METHODS------------------------------------------------------------------------------------------------------
 
-    auto createEntity(const Signature& _signature) -> Entity;
-    void destroyEntity(const Entity& _entity);
-    void addComponent(const Entity& _entity, uint32_t _type, sComponentArray* _component);
-    void removeComponent(const Entity& _entity, uint32_t _type);
-    auto getComponent(const Entity& _entity, uint32_t _type) -> void*;
-    auto hasComponent(const Entity& _entity, uint32_t _type) -> bool;
-    auto query(const Signature& _signature) const -> const std::vector<const Archetype*>&;
+    void invalidateQueryCache();
+    void invalidateEntity(const Entity& _entity);
+    void updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index);
 
-    //REGISTRY------------------------------------------------------------------------------------------------------------------------
+    auto moveEntity(Entity _entity, const Signature& _new_signature) -> Archetype*;
+    void removeEntityAt(Archetype* _archetype, size_t _index);
+    void moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target);
 
     auto getArchetype(const Signature& _signature) -> Archetype*;
-    void invalidateQueryCache();
-
-    //COMPONENTS-------------------------------------------------------------------------------------------------------------------
+    
+    auto allocateEntity() -> Entity;
 
     template<typename T> void addComponentToArray(Archetype* _archetype, const T& _component);
-
-    //ENTITIES-----------------------------------------------------------------------------------------------------------------------
-    
-    auto moveEntity(Entity _entity, const Signature& _new_signature) -> Archetype*;
-    void invalidateEntity(const Entity& _entity);
-    void removeEntityAt(Archetype* _archetype, size_t _index) noexcept;
-    void updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) noexcept;
-    void moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target) noexcept;
-    auto allocateEntity() -> Entity;
 };
 
 #include "Registry.inl"

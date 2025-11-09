@@ -15,7 +15,7 @@ struct sEvent {
     void trigger(Args... _args) {
         //should optimize to virtual methods or function pointers
         for (auto& callback : listeners)
-            callback(_args...);
+            callback(std::forward<Args>(_args)...);
     }
 
     void clear() {
