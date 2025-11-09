@@ -4,32 +4,38 @@
 #include "systems/DummySystem.h"
 #include "components/DummyComponent.h"
 
+#include <random>
 #include <iostream>
 
 int main() {
     Registry registry;
     SystemManager sys_manager;
 
-    std::cout << "ecs test :) \n \n";
-
     sys_manager.registerSystem<DummySystem>(&registry);
-    
-    Entity e1 = registry.createEntity(DummyComponent{});
-    Entity e2 = registry.createEntity(DummyComponent{});
-    Entity e3 = registry.createEntity();
 
-    registry.removeComponent<DummyComponent>(e2);
+    constexpr size_t entity_amount = 100'000;
+    std::vector<Entity> entities;
+    entities.reserve(entity_amount);
 
-    sys_manager.update(0.f);
+    for (size_t i = 0; i < entity_amount; ++i)
+        entities.push_back(registry.createEntity(DummyComponent{}));
 
-    registry.destroyEntity(e1);
-    registry.destroyEntity(e2);
-    
-    sys_manager.update(0.f);
+    std::mt19937 rng(12345);
+    std::uniform_int_distribution<size_t> dist(0, entity_amount - 1);
+    for (size_t i = 0; i < entity_amount; ++i) {
+        size_t idx = dist(rng);
+        Entity e = entities[idx];
+        if (registry.hasComponent<DummyComponent>(e))
+            registry.removeComponent<DummyComponent>(e);
+        else
+            registry.addComponent(e, DummyComponent{});
+    }
 
-    registry.addComponent(e3, DummyComponent{});
+    for (size_t i = 0; i < 50'000; ++i) {
+        size_t idx = dist(rng);
+        if (registry.entityExists(entities[idx]))
+            registry.destroyEntity(entities[idx]);
+    }
 
-    sys_manager.update(0.f);
-
-    return 0;
+    std::cout << "it works :D\n";
 }
