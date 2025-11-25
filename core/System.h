@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ECS.h"
+
 class Registry;
 
 class System {
