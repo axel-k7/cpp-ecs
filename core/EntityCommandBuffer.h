@@ -18,9 +18,28 @@ public:
         std::vector<std::function<void(const Entity&)>> apply_commands;
     };
 
+    template <typename T>
+    struct Event {
+        Entity entity;
+        T data;
+    };
+
+    struct sEventBuffer {
+        virtual ~sEventBuffer() = default;
+        virtual void clear() = 0;
+    };
+
+    template<typename T>
+    struct EventBuffer : public sEventBuffer {
+        std::vector<Event<T>> events;
+        void clear() override {
+            events.clear();
+        }
+    };
+
 
     template<typename... Components>
-    Entity createEntity(Components&&... _components) {
+    auto createEntity(Components&&... _components) -> Entity {
         Entity entity = registry->createEntity();
 
         (addComponent(entity, std::forward<Components>(_components)), ...);
@@ -76,6 +95,22 @@ public:
                 registry->removeComponent<T>(_entity);
             }
         );
+    }
+
+    template<typename T>
+    auto queryEvents() -> std::vector<Event<T>>& {
+        return getEventBuffer<T>().events;
+    }
+
+    template<typename T>
+    void addEvent(Entity _entity, const T& _data = {}) {
+        auto& event_buffer = getEventBuffer<T>();
+        event_buffer.events.push_back({ _entity, _data });
+    }
+
+
+    void clearEvents() {
+        event_list.clear();
     }
 
 
@@ -137,8 +172,22 @@ public:
     void setRegistry(Registry* _registry) { registry = _registry; }
 
 private:
+    template<typename T>
+    auto getEventBuffer() -> EventBuffer<T>& {
+        uint32_t type = Registry::getComponentTypeID<T>();
+
+        auto& ptr = event_list[type];
+
+        if (!ptr) //nullptr
+            ptr = std::make_unique<EventBuffer<T>>();
+
+        return *static_cast<EventBuffer<T>*>(ptr.get());
+    }
+
+
     Registry* registry = nullptr;
 
     std::unordered_map<uint32_t, Command> command_buffer;
+    std::unordered_map<uint32_t, std::unique_ptr<sEventBuffer>> event_list;
 };
 

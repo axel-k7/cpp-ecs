@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Registry.h"
+#include <iostream>
 
 //---------------------------------------------------------------------------------------------------------------------
 //ENTITY
@@ -32,8 +33,8 @@ auto Registry::createEntity(Components&&... _components) -> Entity {
 //COMPONENTS
 
 
-template<typename T>
-void Registry::addComponent(const Entity& _entity, const T& _component) {
+template<typename T, typename... Args>
+void Registry::addComponent(const Entity& _entity, Args&&... _args) {
     uint32_t type = getComponentTypeID<T>();
     Signature new_signature = records[_entity.id].signature;
     if (new_signature.test(type))
@@ -50,7 +51,7 @@ void Registry::addComponent(const Entity& _entity, const T& _component) {
         target->component_arrays[type] = std::move(new_array);
     }
     
-    array->addFrom((void*)&_component);
+    array->addFrom((void*)(new T(std::forward<Args>(_args)...)));
     
     if (onComponentAdded.count(type))
         onComponentAdded.at(type).trigger(_entity, type);
@@ -69,7 +70,7 @@ auto Registry::getComponent(const Entity& _entity) -> T& {
 
     EntityRecord& record = records[_entity.id];
     ComponentArray<T>* array = record.archetype->getArray<T>();
-
+        
     return array->get(record.index);
 } 
 
@@ -95,7 +96,19 @@ auto Registry::query() const -> const std::vector<const Archetype*>& {
     Signature signature;
     (signature.set(getComponentTypeID<Components>()), ...);
 
-    return query(signature);
+    Signature empty;
+    return query({ signature, empty });
+}
+
+template<typename... Included, typename... Excluded>
+auto Registry::query(Exclude<Excluded...>) const -> const std::vector<const Archetype*>& {
+    Signature include_signature;
+    (include_signature.set(getComponentTypeID<Included>()), ...);
+
+    Signature exclude_signature;
+    (exclude_signature.set(getComponentTypeID<Excluded>()), ...);
+
+    return query({ include_signature, exclude_signature });
 }
 
 
@@ -159,26 +172,13 @@ auto Registry::ComponentArray<T>::get(size_t _index) -> T& {
 }
 
 template<typename T>
-size_t Registry::ComponentArray<T>::size() const {
+auto Registry::ComponentArray<T>::size() const -> size_t {
     return data.size();
 }
 
 template<typename T>
 void Registry::ComponentArray<T>::swapElements(size_t _a, size_t _b) {
     std::swap(data[_a], data[_b]);
-}
-
-template<typename T>
-void Registry::ComponentArray<T>::moveElement(size_t _index, sComponentArray* _to) {
-    auto* other = static_cast<ComponentArray<T>*>(_to);
-
-    other->data.push_back(std::move(data[_index]));
-
-    size_t last = data.size() -1;
-    if (_index != last)
-        data[_index] = std::move(data[last]);
-    
-    data.pop_back();
 }
 
 template<typename T>

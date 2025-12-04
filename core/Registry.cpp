@@ -110,8 +110,8 @@ auto Registry::hasComponent(const Entity& _entity, uint32_t _type) -> bool {
 
 
     //query archetype of same bitmask
-auto Registry::query(const Signature& _signature) const -> const std::vector<const Archetype*>& {
-    auto it = query_cache.find(_signature);
+auto Registry::query(QueryFilter _filter) const -> const std::vector<const Archetype*>& {
+    auto it = query_cache.find(_filter);
     if (it != query_cache.end())
         return it->second;
 
@@ -120,14 +120,20 @@ auto Registry::query(const Signature& _signature) const -> const std::vector<con
 
     for (const auto& archetype_ptr : archetypes) {
         Archetype* archetype = archetype_ptr.get();
-        if ((archetype->signature & _signature) == _signature)
+        bool has_include = (archetype->signature & _filter.include) == _filter.include;
+        bool has_exclude = (archetype->signature & _filter.exclude) != 0;
+
+        if (has_include && !has_exclude)
             result.push_back(archetype);
     }
     
-    auto [_it, _] = query_cache.emplace(_signature, std::move(result));
+    auto [_it, _] = query_cache.emplace(_filter, std::move(result));
     return _it->second;
 }
 
+auto Registry::query(const uint32_t& _entity_id) const -> const EntityRecord& {
+    return records[_entity_id];
+}
 
 //QUERIES END
 //---------------------------------------------------------------------------------------------------------------------
@@ -145,7 +151,7 @@ auto Registry::moveEntity(Entity _entity, const Signature& _new_signature) -> Ar
         moveToArchetype(_entity, curr_archetype, record.index, target_archetype);
     }
     else {
-        record.index = target_archetype->entities.size();
+        record.index = uint32_t(target_archetype->entities.size());
         target_archetype->entities.push_back(_entity);
         record.archetype = target_archetype;
     }
@@ -179,16 +185,15 @@ void Registry::removeEntityAt(Archetype* _archetype, size_t _index) {
     if (_index != last_index) {
         Entity last_entity = _archetype->entities[last_index];
         _archetype->entities[_index] = last_entity;
-        records[last_entity.id].index = _index;
+        records[last_entity.id].index = uint32_t(_index);
         
-        for (auto& [_, array] : _archetype->component_arrays) {
-            if (_index != last_index) 
-                array->swapElements(_index, last_index);
-            
-            array->removeLast();
-        }
+        for (auto& [_, array] : _archetype->component_arrays)    
+            array->swapElements(_index, last_index); 
     }
 
+    for (auto& [_, array] : _archetype->component_arrays) {
+        array->removeLast();
+    }
 
     _archetype->entities.pop_back();
 };
@@ -197,7 +202,7 @@ void Registry::removeEntityAt(Archetype* _archetype, size_t _index) {
 void Registry::updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) {
     auto& record = records[_entity.id];
     record.archetype = _new;
-    record.index = _new_index;
+    record.index = uint32_t(_new_index);
     record.signature = _new->signature;
 };
 
@@ -209,7 +214,7 @@ void Registry::moveToArchetype(Entity _entity, Archetype* _source, size_t _sourc
     size_t new_index = _target->entities.size();
     _target->entities.push_back(_entity);
 
-    _target->transferComponents(_source, _source_index);
+    _target->migrateComponents(_source, _source_index);
 
     removeEntityAt(_source, _source_index);
 
@@ -275,20 +280,20 @@ auto Registry::Archetype::ensureComponentArray(uint32_t _type, sComponentArray* 
     auto it = component_arrays.find(_type);
     if (it == component_arrays.end()) {
         std::unique_ptr<sComponentArray> new_array(_source_array->cloneEmpty());
-        auto [it, _] = component_arrays.emplace(_type, std::move(new_array));
+        auto [it2, _] = component_arrays.emplace(_type, std::move(new_array));
 
-        return it->second.get();
+        return it2->second.get();
     }
 
     return it->second.get();
 };
 
 
-void Registry::Archetype::transferComponents(const Archetype* _source, size_t _source_index) {
+void Registry::Archetype::migrateComponents(const Archetype* _source, size_t _source_index) {
     for (auto& [type, source_array] : _source->component_arrays) {
         if (signature.test(type)) {
             sComponentArray* target = ensureComponentArray(type, source_array.get());
-            source_array->moveElement(_source_index, target);
+            target->addFrom(source_array->getRaw(_source_index));
         }
     }
 };

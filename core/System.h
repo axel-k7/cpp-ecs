@@ -1,6 +1,7 @@
 #pragma once
 
-#include "ECS.h"
+#include "app/Ecs/ECS.h"
+#include "App/Ecs/core/EntityCommandBuffer.h"
 
 class Registry;
 
@@ -10,10 +11,12 @@ public:
     virtual void update(const float& _delta_time) = 0;
     virtual void setupListeners(Registry* _registry) = 0;
     
-    void setRegistry(Registry* _registry) { registry = _registry; };
+    void setRegistry(Registry* _registry) { registry = _registry; }
+    void setCommandBuffer(EntityCommandBuffer* _buffer) { buffer = _buffer; }
 
 protected:
     Registry* registry = nullptr;
+    EntityCommandBuffer* buffer = nullptr;
 
 private:
     //Entity Callbacks
