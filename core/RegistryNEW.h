@@ -94,6 +94,12 @@ struct ComponentView {
 
 /////////////////////////////////////////////////////////////////////////
 
+//chunk size is currently capacity * total size of an entity + components
+//should probably change this to a set size in memory for consistency
+//or if expected chunk size > limit, use a set size
+//if there's like one entity with a massive amount of components
+constexpr size_t CHUNK_CAPACITY = 25;
+
 constexpr size_t MAX_COMPONENTS = 64;
 using Signature = std::bitset<MAX_COMPONENTS>;
 
@@ -267,8 +273,28 @@ public:
 
             return mask.count();
         }
+
+        auto ensureChunk() -> Chunk& {
+            //find first non-filled chunk
+            for (auto& chunk : chunks) {
+                if (chunk.count >= chunk.capacity)
+                    continue;
+
+                return chunk;
+            }
+
+            //or create a new one
+            Chunk* new_chunk = new Chunk(active_components, CHUNK_CAPACITY);
+            chunks.push_back(*new_chunk);
+
+            return *new_chunk;
+        }
     };
 
+    //don't think there's a better way to connect a signature to an archetype
+    //systems should not have to do "get archetype" through query each and every frame
+    //the pointer should be saved or subscribed to after an inital "ensureArchetype"
+    std::unordered_map<Signature, Archetype*, SignatureHash> signature_map;
 
     struct EntityRecord {
         Archetype* archetype;
@@ -279,7 +305,6 @@ public:
 
     //atomic = multiple threads can use it at the same time
     static inline std::atomic<uint32_t> type_id;
-    
     template<typename T>
     static auto getComponentTypeID() -> uint32_t {
         static uint32_t id = type_id.fetch_add(1);
@@ -290,5 +315,33 @@ public:
     auto getComponentInfo(uint32_t _component_id) const -> ComponentInfo* {
         return info_list[_component_id];
     }
+
+
+    uint32_t next_id = 0;
+    std::vector<uint32_t> free_ids;
+    std::vector<uint32_t> versions;
+    std::vector<EntityRecord> records;
+
+    auto allocateEntity() -> Entity {
+        uint32_t id;
+
+        //get id or create new one
+        if (!free_ids.empty()) {
+            id = free_ids.back();
+            free_ids.pop_back();
+        }
+        else {
+            id = next_id++;
+            versions.push_back(0);
+            records.emplace_back(); //EntityRecord{ nullptr, 0, {} }
+        }
+
+        return Entity{ id, versions[id] };
+    }
+
+    auto entityExists(const Entity& _entity) -> const bool {
+        return _entity.id < versions.size() && versions[_entity.id] == _entity.version;
+    }
+
 
 };
