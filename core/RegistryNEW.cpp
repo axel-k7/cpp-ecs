@@ -114,6 +114,34 @@ auto Registry::Chunk::operator=(Chunk&& _source) -> Chunk& {
     return *this;
 }
 
+void Registry::Chunk::moveComponent(
+    size_t _index, size_t _array_index,
+    Chunk* _source, size_t _source_index, size_t _source_array_index,
+    const ComponentInfo* _info
+) {
+    void* source = _source->component_arrays[_source_array_index].get(_source_index);
+
+    //move then clean up previous location
+
+    _info->move(
+        source,
+        component_arrays[_array_index].get(_index)
+    );
+
+    _info->destructor(
+        source
+    );
+}
+
+
+void Registry::Chunk::destroyAt(size_t _index, const std::vector<const ComponentInfo*>& _components) {
+    for (size_t i = 0; i < _components.size(); ++i) {
+        _components[i]->destructor(
+            component_arrays[i].get(_index);
+        )
+    }
+}
+
 
 void Registry::Chunk::pushBack(Entity& _entity, void** _elements) {
     if (count >= capacity)
@@ -165,6 +193,15 @@ auto Registry::Chunk::swapPop(size_t _index) -> Entity {
     return swapped_entity;
 }
 
+auto Registry::Chunk::getRaw(size_t _index, size_t _array_index) -> void* {
+    return component_arrays[_array_index].get(_index);
+};
+
+void Registry::Chunk::addEntity(Entity _entity) {
+    entities[count] = _entity;
+    count++;
+}
+
 /////////////////////////////////////////////////////////////////////////
 //Archetype
 /////////////////////////////////////////////////////////////////////////
@@ -198,6 +235,7 @@ auto Registry::Archetype::ensureChunk() -> Chunk& {
     return chunks.emplace_back(active_components, CHUNK_CAPACITY);
 }
 
+
 auto Registry::Archetype::getLocalIndex(uint32_t _id) const -> size_t {
     if (!signature.test(_id))
         return SIZE_MAX;
@@ -211,6 +249,7 @@ auto Registry::Archetype::getLocalIndex(uint32_t _id) const -> size_t {
     return mask.count();
 }
 
+
 /////////////////////////////////////////////////////////////////////////
 //Registry
 /////////////////////////////////////////////////////////////////////////
@@ -220,7 +259,7 @@ auto Registry::getComponentInfo(uint32_t _component_id) const -> ComponentInfo* 
 }
 
 
-auto Registry::getArchetype(const Signature _signature) -> Archetype* {
+auto Registry::ensureArchetype(const Signature _signature) -> Archetype* {
     auto it = signature_map.find(_signature);
     if (it != signature_map.end())
         return it->second;
@@ -293,4 +332,10 @@ void Registry::invalidateEntity(const Entity& _entity) {
     record.archetype = nullptr;
     record.chunk = nullptr;
     record.index = -1;
+}
+
+void Registry::eraseChunkEntry(Chunk* _chunk, size_t _index) {
+    Entity swapped_entity = _chunk->swapPop(_index);
+    if (swapped_entity != Entity::Null())
+        records[swapped_entity.id].index = _index;
 }

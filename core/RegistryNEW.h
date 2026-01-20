@@ -62,7 +62,7 @@ struct ComponentView {
 
     ComponentArray& component_array;
 
-    auto operator[](size_t _index)->T&;
+    auto operator[](size_t _index) -> T&;
     auto operator[](size_t _index) const -> const T&;
 };
 
@@ -112,12 +112,26 @@ public:
 
         size_t highest_alignment;
 
-
-
+        //make one that doesn't use void**
+        //templating instead
         void pushBack(Entity& _entity, void** _elements);
+
+        //pure memory relocation
+        void moveComponent( size_t _index, size_t _array_index,
+            Chunk* _source, size_t _source_index, size_t _source_array_index,
+            const ComponentInfo* _info
+        );
+        
+        template<typename T>
+        void createAt(size_t _index, size_t _array_index, T&& _data);
+        void destroyAt(size_t _index, const std::vector<const ComponentInfo*>& _components);
 
         //swap and pop returns swapped entity
         auto swapPop(size_t _index) -> Entity;
+
+        auto getRaw(size_t _index, size_t _array_index) -> void*;
+
+        void addEntity(Entity _entity);
     };
 
     /////////////////////////////////////////////////////////////////////////
@@ -167,7 +181,7 @@ public:
     template<typename T>
     static auto getComponentTypeID() -> uint32_t;
     auto getComponentInfo(uint32_t _component_id) const -> ComponentInfo*;
-    auto getArchetype(const Signature _signature) -> Archetype*;
+    auto ensureArchetype(const Signature _signature) -> Archetype*;
 
     auto entityExists(const Entity& _entity) -> const bool;
     auto allocateEntity() -> Entity;
@@ -178,8 +192,18 @@ public:
     void updateEntityRecord(Entity _entity, Archetype* _archetype, Chunk* _chunk, size_t _chunk_index);
     void invalidateEntity(const Entity& _entity);
 
-    template<typename... Components>
-    void addComponents(Entity _entity, Components&&... _data);
+    void eraseChunkEntry(Chunk* _chunk, size_t _index);
+
+    template<typename... Components> void addComponents(Entity _entity, Components&&... _data);
+    template<typename... Components> void removeComponents(Entity _entity);
+
+    //queries
+    //query cache? (depens on query speed)
+    //maybe shouldn't even do queries?
+    //archetype subscriptions instead? no need for lookups
+    //just getting local ids and indexing with them
+    //"target all archetypes with position and velocity"
+    //need some way to update when more archetypes with position & velocity are created
 };
 
 #include "RegistryNEW.inl"

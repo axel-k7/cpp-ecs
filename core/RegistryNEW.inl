@@ -47,6 +47,16 @@ auto ComponentView<T>::operator[](size_t _index) const -> const T& {
 }
 
 /////////////////////////////////////////////////////////////////////////
+//Chunk
+/////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+void Registry::Chunk::createAt(size_t _index, size_t _array_index, T&& _data) {
+    new (component_arrays[_array_index].get(_index)) T(std::forward<T>(_data));
+}
+
+
+/////////////////////////////////////////////////////////////////////////
 //Archetype
 /////////////////////////////////////////////////////////////////////////
 
@@ -70,6 +80,7 @@ auto Registry::Archetype::getLocalIndex() const -> size_t {
     return mask.count();
 }
 
+
 /////////////////////////////////////////////////////////////////////////
 //Registry
 /////////////////////////////////////////////////////////////////////////
@@ -86,60 +97,96 @@ void Registry::addComponents(Entity _entity, Components&&... _data) {
         return;
 
     EntityRecord& record = records[_entity.id];
-    Archetype* curr_archetype = record.archetype;
-    Chunk* curr_chunk = record.chunk;
-    size_t curr_index = record.index;
 
     //get final signature
     //start with current sig or create new
-    Signature target_signature = curr_archetype ? curr_archetype->signature : Signature();
+    Signature target_signature = record.archetype ? record.archetype->signature : Signature();
     (target_signature.set(getComponentTypeID<Components>()), ...);
     
-    if (curr_archetype && target_signature == curr_archetype->signature)
-        return; //if trying to add a component the entity already has, maybe add error message here?
+    if (record.archetype && target_signature == record.archetype->signature)
+        return; //if trying to add components the entity already has, maybe add warning message here?
 
-    Archetype* target_archetype = getArchetype(target_signature);
+    Archetype* target_archetype = ensureArchetype(target_signature);
     Chunk& target_chunk = target_archetype->ensureChunk();
     size_t target_index = target_chunk.count;
 
     //if entity already had components, move them into the new chunk
     //loop over previous active components -> move
-    if (curr_archetype) {
-        for (const ComponentInfo* info : curr_archetype->active_components) {
-
-            size_t curr_array_index     = curr_archetype->getLocalIndex(info->id);
-            size_t target_array_index   = target_archetype->getLocalIndex(info->id);
-
-            void* source = curr_chunk->component_arrays[curr_array_index].get(curr_index);
-            void* target = target_chunk->component_arrays[target_array_index].get(target_index);
-
-            info->move(source, target);
-            info->destructor(source);
+    if (record.archetype) {
+        for (const ComponentInfo* info : record.archetype->active_components) {
+            target_chunk.moveComponent(
+                target_index, target_archetype->getLocalIndex(info->id),
+                record.chunk, record.index, record.archetype->getLocalIndex(info->id),
+                info
+            );
         }
     }
 
-    //construct or move new components
-    //doing this through a lambda inside a fold expression to handle
+    //construct new components not present in the source archetype
+    //running this through a lambda inside a fold expression to handle
     //every component in the _data parameter pack
-    (
-        [&]<typename T>(T&& _data) {
-            using Component = std::decay_t<T>;
-            size_t target_array_index = target_archetype->getLocalIndex<Component>();
-            void* target = target_chunk->component_arrays[target_array_index].get(target_index);
 
-            new (target) Component(std::forward<T>(_data));
-        } 
-    (std::forward<Components>(_data)), ...);
-
-    target_chunk.entities[target_index] = _entity;
-    target_chunk.count++;
-
-    updateEntityRecord(_entity, target_archetype, &target_chunk, target_index);
-
-    if (curr_chunk) {
-        Entity swapped_entity = curr_chunk->swapPop(curr_index);
-        if (!swapped_entity.isNull())
-            records[swapped_entity.id].index = curr_index;
+    const auto& create_new = [&]<typename T>(T&& _data) {
+        using Component = std::decay_t<T>;
+        uint32_t type = Registry::getComponentTypeID<Component>();
+    
+        if (!record.archetype && !record.archetype->signature.test(type)) {
+            target_chunk.createAt<Component>(
+                target_index,
+                target_archetype->getLocalIndex(type),
+                std::forward<T>(_data)
+            );
+        }
     }
 
+    (create_new(std::forward<Components>(_data)), ...);
+
+
+    target_chunk.addEntity(_entity);
+
+    if (record.chunk) {
+        eraseChunkEntry(record.chunk, record.index);
+    }
+
+    updateEntityRecord(_entity, target_archetype, &target_chunk, target_index);
+}
+
+template<typename... Components>
+void Registry::removeComponents(Entity _entity) {
+    if (!entityExists(_entity))
+        return;
+
+    EntityRecord& record = records[_entity.id];
+
+    if (!record.archetype)
+        return; //if entity doesn't have any components
+
+    //get final 
+    Signature target_signature = record.archetype->signature;
+    (target_signature.reset(getComponentTypeID<Components>()), ...);
+
+    if (target_signature == record.archetype->signature)
+        return; //if trying to remove components the entity doesn't have
+
+    Archetype* target_archetype = ensureArchetype(target_signature);
+    Chunk& target_chunk = target_archetype->ensureChunk();
+    size_t target_index = target_chunk.count;
+
+    //can guarantee final archetype here will only include components which
+    //the previous one already had
+    //NEED: helper function to move from one archetype to another with a single call
+    //needed for when calculating final signature in the buffer by adding all the "add" and "remove" component calls together
+    for (const ComponentInfo* info : target_archetype->active_components) {
+        target_chunk.moveComponent(
+            target_index, target_archetype->getLocalIndex(info->id),
+            record.chunk, record.index, record.archetype->getLocalIndex(info->id),
+            info
+        );
+    }
+
+    eraseChunkEntry(record.chunk, record.index);
+
+    target_chunk.addEntity(_entity);
+
+    updateEntityRecord(_entity, target_archetype, &target_chunk, target_index);
 }
