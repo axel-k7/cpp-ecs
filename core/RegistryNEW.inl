@@ -33,8 +33,7 @@ void ComponentInfo::setInfo(uint32_t _id) {
 template<typename T>
 ComponentView<T>::ComponentView(ComponentArray& _component_array)
     : component_array(_component_array)
-{
-};
+{ }
 
 template<typename T>
 auto ComponentView<T>::operator[](size_t _index) -> T& {
@@ -126,18 +125,18 @@ void Registry::addComponents(Entity _entity, Components&&... _data) {
     //running this through a lambda inside a fold expression to handle
     //every component in the _data parameter pack
 
-    const auto& create_new = [&]<typename T>(T&& _data) {
+    const auto& create_new = [&]<typename T>(T && _data) {
         using Component = std::decay_t<T>;
         uint32_t type = Registry::getComponentTypeID<Component>();
-    
-        if (!record.archetype && !record.archetype->signature.test(type)) {
+
+        if (!record.archetype || !record.archetype->signature.test(type)) {
             target_chunk.createAt<Component>(
                 target_index,
                 target_archetype->getLocalIndex(type),
                 std::forward<T>(_data)
             );
         }
-    }
+    };
 
     (create_new(std::forward<Components>(_data)), ...);
 
@@ -189,4 +188,22 @@ void Registry::removeComponents(Entity _entity) {
     target_chunk.addEntity(_entity);
 
     updateEntityRecord(_entity, target_archetype, &target_chunk, target_index);
+}
+
+
+template<typename... Components>
+auto Registry::query() -> Query* {
+    Signature signature;
+    (signature.set(getComponentTypeID<Components>()), ...);
+
+    return query(signature);
+}
+
+template<typename... Included, typename... Excluded>
+auto Registry::query(Exclude<Excluded...>) -> Query* {
+    Signature signature;
+    (signature.set(getComponentTypeID<Included>()), ...);
+    (signature.reset(getComponentTypeID < Excluded()), ...);
+
+    return query(signature);
 }

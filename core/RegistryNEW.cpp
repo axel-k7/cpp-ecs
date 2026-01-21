@@ -128,37 +128,17 @@ void Registry::Chunk::moveComponent(
         component_arrays[_array_index].get(_index)
     );
 
-    _info->destructor(
-        source
-    );
+    if (_info->destructor)
+        _info->destructor(source);
 }
 
 
 void Registry::Chunk::destroyAt(size_t _index, const std::vector<const ComponentInfo*>& _components) {
     for (size_t i = 0; i < _components.size(); ++i) {
-        _components[i]->destructor(
-            component_arrays[i].get(_index);
-        )
+        if (_components[i]->destructor) {
+            _components[i]->destructor(component_arrays[i].get(_index));
+        }
     }
-}
-
-
-void Registry::Chunk::pushBack(Entity& _entity, void** _elements) {
-    if (count >= capacity)
-        return; //chunk split?
-
-    //store entity at the back of entity buffer
-    static_cast<Entity*>(entity_buffer)[count] = _entity;
-
-    //move all relevant data
-    for (size_t i = 0; i < component_arrays.size(); ++i) {
-        void* destination = component_arrays[i].get(count);
-        void* source = _elements[i];
-
-        component_arrays[i].info->move(source, destination);
-    }
-
-    count++;
 }
 
 auto Registry::Chunk::swapPop(size_t _index) -> Entity {
@@ -178,9 +158,13 @@ auto Registry::Chunk::swapPop(size_t _index) -> Entity {
             void* target = array.get(_index);
             void* last = array.get(last_index);
 
-            array.info->destructor(target); //destroy target element
+            if (array.info->destructor)
+                array.info->destructor(target); //destroy target element
+
             array.info->move(last, target); //swap last element into the now empty slot
-            array.info->destructor(last);   //clean up old position
+    
+            if (array.info->destructor)
+                array.info->destructor(last);   //clean up old position
         }
     }
     else {
@@ -249,6 +233,18 @@ auto Registry::Archetype::getLocalIndex(uint32_t _id) const -> size_t {
     return mask.count();
 }
 
+/////////////////////////////////////////////////////////////////////////
+//Query
+/////////////////////////////////////////////////////////////////////////
+
+Registry::Query::Query(Signature _signature) 
+    : signature(_signature)
+{}
+
+void Registry::Query::tryMatch(Archetype* _archetype) {
+    if ((_archetype->signature & signature) == signature)
+        archetypes.push_back(_archetype);
+}
 
 /////////////////////////////////////////////////////////////////////////
 //Registry
@@ -265,12 +261,16 @@ auto Registry::ensureArchetype(const Signature _signature) -> Archetype* {
         return it->second;
 
     std::unique_ptr<Archetype> new_archetype = std::make_unique<Archetype>(_signature, this);
+    Archetype* archetype_ptr = new_archetype.get();
 
-    Archetype* raw_archetype = new_archetype.get();
-    signature_map[_signature] = raw_archetype;
+    signature_map[_signature] = archetype_ptr;
+
+    for (auto&& query : query_subscriptions) {
+        query->tryMatch(archetype_ptr);
+    }
 
     archetypes.push_back(std::move(new_archetype));
-    return raw_archetype;
+    return archetype_ptr;
 }
 
 
@@ -311,13 +311,6 @@ auto Registry::entityExists(const Entity& _entity) -> const bool {
     return _entity.id < versions.size() && versions[_entity.id] == _entity.version;
 }
 
-void Registry::moveToArchetype(Entity _entity, Archetype* _archetype, void** _elements) {
-    Chunk& chunk = _archetype->ensureChunk();
-    chunk.pushBack(_entity, _elements);
-
-    updateEntityRecord(_entity, _archetype, &chunk, chunk.count);
-}
-
 void Registry::updateEntityRecord(Entity _entity, Archetype* _archetype, Chunk* _chunk, size_t _chunk_index) {
     EntityRecord& record = records[_entity.id];
 
@@ -331,11 +324,30 @@ void Registry::invalidateEntity(const Entity& _entity) {
 
     record.archetype = nullptr;
     record.chunk = nullptr;
-    record.index = -1;
+    record.index = SIZE_MAX;
 }
 
 void Registry::eraseChunkEntry(Chunk* _chunk, size_t _index) {
     Entity swapped_entity = _chunk->swapPop(_index);
     if (swapped_entity != Entity::Null())
         records[swapped_entity.id].index = _index;
+}
+
+
+auto Registry::query(const Signature _signature) -> Query* {
+    for (auto&& query : query_subscriptions) {
+        if ((query->signature & _signature) == _signature)
+            return query.get();
+    }
+
+    std::unique_ptr<Query> new_query = std::make_unique<Query>(_signature);
+
+    for (auto& archetype : archetypes) {
+        new_query->tryMatch(archetype.get());
+    }
+
+    Query* query_ptr = new_query.get();
+
+    query_subscriptions.push_back(std::move(new_query));
+    return query_ptr;
 }

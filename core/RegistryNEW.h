@@ -112,10 +112,6 @@ public:
 
         size_t highest_alignment;
 
-        //make one that doesn't use void**
-        //templating instead
-        void pushBack(Entity& _entity, void** _elements);
-
         //pure memory relocation
         void moveComponent( size_t _index, size_t _array_index,
             Chunk* _source, size_t _source_index, size_t _source_array_index,
@@ -153,6 +149,26 @@ public:
 
     /////////////////////////////////////////////////////////////////////////
 
+    //Systems do a "query subscription" for certain components
+    //this adds a query to the query list. 
+    //Whenever a new archetype is added, every query checks too see 
+    //if the new archetype matches the queried components
+    
+    //alternative to a "query cache" present in my previous ecs
+    //point of this is to not have systems have to do lookups each frame
+    
+    //should maybe start using smart pointers
+    struct Query {
+        Query(Signature _signature);
+
+        const Signature signature;
+        std::vector<Archetype*> archetypes;
+
+        void tryMatch(Archetype* _archetype);
+    };
+
+    /////////////////////////////////////////////////////////////////////////
+
     struct EntityRecord {
         Archetype* archetype;
         Chunk* chunk;
@@ -167,6 +183,7 @@ public:
     std::unordered_map<Signature, Archetype*, SignatureHash> signature_map;
 
     std::vector<std::unique_ptr<Archetype>> archetypes;
+    std::vector<std::unique_ptr<Query>> query_subscriptions;
 
     //atomic = multiple threads can use it at the same time
     static inline std::atomic<uint32_t> type_id;
@@ -187,8 +204,6 @@ public:
     auto allocateEntity() -> Entity;
     void destroyEntity(Entity _entity);
 
-    void moveToArchetype(Entity _entity, Archetype* _archetype, void** _elements);
-
     void updateEntityRecord(Entity _entity, Archetype* _archetype, Chunk* _chunk, size_t _chunk_index);
     void invalidateEntity(const Entity& _entity);
 
@@ -197,13 +212,17 @@ public:
     template<typename... Components> void addComponents(Entity _entity, Components&&... _data);
     template<typename... Components> void removeComponents(Entity _entity);
 
-    //queries
-    //query cache? (depens on query speed)
-    //maybe shouldn't even do queries?
-    //archetype subscriptions instead? no need for lookups
-    //just getting local ids and indexing with them
-    //"target all archetypes with position and velocity"
-    //need some way to update when more archetypes with position & velocity are created
+
+    template<typename Excluded>
+    struct Exclude{};
+
+    template<typename... Components>
+    auto query() -> Query*;
+
+    template<typename... Included, typename... Excluded>
+    auto query(Exclude<Excluded...>) -> Query*;
+
+    auto query(const Signature _signature) -> Query*;
 };
 
 #include "RegistryNEW.inl"
