@@ -66,7 +66,6 @@ Registry::Chunk::Chunk(const std::vector<const ComponentInfo*> _components, size
 
 Registry::Chunk::Chunk(Chunk&& _source)
     : component_arrays(std::move(_source.component_arrays))
-    , entities(std::move(_source.entities))
     , chunk_buffer(_source.chunk_buffer)
     , entity_buffer(_source.entity_buffer)
     , count(_source.count)
@@ -100,7 +99,6 @@ auto Registry::Chunk::operator=(Chunk&& _source) -> Chunk& {
         this->~Chunk();
 
         component_arrays = std::move(_source.component_arrays);
-        entities = std::move(_source.entities);
         chunk_buffer = _source.chunk_buffer;
         entity_buffer = _source.entity_buffer;
         count = _source.count;
@@ -181,8 +179,12 @@ auto Registry::Chunk::getRaw(size_t _index, size_t _array_index) -> void* {
     return component_arrays[_array_index].get(_index);
 };
 
-void Registry::Chunk::addEntity(Entity _entity) {
-    entities[count] = _entity;
+auto Registry::Chunk::getEntities() -> Entity* {
+    return static_cast<Entity*>(entity_buffer);
+};
+
+void Registry::Chunk::pushEntity(Entity _entity) {
+    getEntities()[count] = _entity;
     count++;
 }
 
@@ -242,8 +244,15 @@ Registry::Query::Query(Signature _signature)
 {}
 
 void Registry::Query::tryMatch(Archetype* _archetype) {
-    if ((_archetype->signature & signature) == signature)
-        archetypes.push_back(_archetype);
+    if ((_archetype->signature & signature) != signature)
+        return;
+    
+    archetype_matches.push_back(_archetype);
+
+    for (auto& view : views) {
+        view->pushArchetype(_archetype);
+    }
+
 }
 
 /////////////////////////////////////////////////////////////////////////

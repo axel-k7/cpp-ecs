@@ -141,7 +141,7 @@ void Registry::addComponents(Entity _entity, Components&&... _data) {
     (create_new(std::forward<Components>(_data)), ...);
 
 
-    target_chunk.addEntity(_entity);
+    target_chunk.pushEntity(_entity);
 
     if (record.chunk) {
         eraseChunkEntry(record.chunk, record.index);
@@ -173,8 +173,6 @@ void Registry::removeComponents(Entity _entity) {
 
     //can guarantee final archetype here will only include components which
     //the previous one already had
-    //NEED: helper function to move from one archetype to another with a single call
-    //needed for when calculating final signature in the buffer by adding all the "add" and "remove" component calls together
     for (const ComponentInfo* info : target_archetype->active_components) {
         target_chunk.moveComponent(
             target_index, target_archetype->getLocalIndex(info->id),
@@ -185,7 +183,7 @@ void Registry::removeComponents(Entity _entity) {
 
     eraseChunkEntry(record.chunk, record.index);
 
-    target_chunk.addEntity(_entity);
+    target_chunk.pushEntity(_entity);
 
     updateEntityRecord(_entity, target_archetype, &target_chunk, target_index);
 }

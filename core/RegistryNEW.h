@@ -100,8 +100,6 @@ public:
         Chunk(Chunk&& _source);
         auto operator=(Chunk&& _source) -> Chunk&;
 
-        std::vector<Entity> entities;
-
         //chunk handles memory
         void* chunk_buffer;
         void* entity_buffer; //need to keep track of where the entities are, component arrays know where they are after construction
@@ -126,8 +124,9 @@ public:
         auto swapPop(size_t _index) -> Entity;
 
         auto getRaw(size_t _index, size_t _array_index) -> void*;
+        auto getEntities() -> Entity*; //loop over this like a C array using count
 
-        void addEntity(Entity _entity);
+        void pushEntity(Entity _entity);
     };
 
     /////////////////////////////////////////////////////////////////////////
@@ -159,12 +158,169 @@ public:
     
     //should maybe start using smart pointers
     struct Query {
+
+        struct iView {
+            //type erased view so query can communicate with all types of views
+            virtual ~iView() = default;
+            virtual void pushArchetype(Archetype* _archetype) = 0;
+
+            Query* query_owner;
+            size_t view_index;
+        };
+
+        template<typename... Components>
+        struct QueryView : iView {
+            struct Match {
+                Archetype* archetype;
+                size_t component_indices[sizeof...(Components)];
+            };
+
+            struct Iterator {
+                Iterator(const std::vector<Match>* _matches, size_t _match_index)
+                    : matches(_matches)
+                    , match_index(_match_index)
+                {
+                    //increment here to get to the first valid entity
+                    increment();
+                }
+
+                const std::vector<Match>* matches;
+                size_t match_index;
+                size_t chunk_index = 0;
+                size_t entity_index = 0;
+
+                //helper function which uses std::index_sequence to
+                //get components at current index in the correct order
+                //ex. querying for [pos, vel] and [vel, pos] both work
+                template<size_t... Indices>
+                auto getTuple(std::index_sequence<Indices...>) {
+                    const auto& match = (*matches)[match_index];
+                    Chunk& chunk = match.archetype->chunks[chunk_index];
+
+                    return std::forward_as_tuple(
+                        (*static_cast<Components*>(
+                            chunk.component_arrays[match.component_indices[Indices]].get(entity_index))
+                            )...
+                    );
+                }
+
+                void increment() {
+                    //complexity here is to check for empty chunks and such
+
+                    while (match_index < matches->size()) {
+                        const auto& match = (*matches)[match_index];
+                        const auto& chunks = match.archetype->chunks;
+
+
+                        if (chunk_index < chunks.size() && chunks[chunk_index].count != 0) {
+                            //chunk is within bounds
+
+                            if (entity_index < chunks[chunk_index].count)
+                                return; //entity is within bounds
+
+                            //end of chunk, go to next
+                            entity_index = 0;
+                            chunk_index++;
+                        }
+                        else {
+                            //end of archetype, go to next
+                            chunk_index = 0;
+                            match_index++;
+                        }
+                    }
+                }
+
+
+                //need to define these operators so "for ( auto a : b )" works 
+                //(tuple iteration)
+
+                auto operator*() {
+                    return getTuple(std::index_sequence_for<Components...>{});
+                }
+
+                auto operator++() -> Iterator& {
+                    entity_index++;
+                    increment();
+
+                    return *this;
+                }
+
+                auto operator!=(const Iterator& _other) const -> bool {
+                    if (match_index >= matches->size() && _other.match_index >= _other.matches->size())
+                        return false;
+
+                    return  match_index != _other.match_index ||
+                        chunk_index != _other.chunk_index ||
+                        entity_index != _other.entity_index;
+                }
+            };
+
+            QueryView(Query* _query) 
+                : query_owner(_query)
+            {
+                matches.reserve(query_owner->matching_archetypes.size());
+
+                for (auto* archetype : query_owner->matching_archetypes) {
+                    pushArchetype(archetype);
+                }
+
+                view_index = query_owner->registerView(this);
+            }
+
+            ~QueryView() {
+                query->unregisterView(this);
+            }
+
+            void pushArchetype(Archetype* _archetype) {
+                Match match{ _archetype };
+                size_t i = 0;
+                ((match.component_indices[i++] = _archetype->getLocalIndex<Components>()), ...);
+
+                matches.push_back(std::move(match));
+            }
+
+            auto begin() -> Iterator { return { &matches, 0 }; }
+            auto end() -> Iterator { return { &matches, matches.size()}; }
+
+            std::vector<Match> matches;
+        };
+
+
+
         Query(Signature _signature);
 
         const Signature signature;
-        std::vector<Archetype*> archetypes;
+        std::vector<Archetype*> matching_archetypes;
+        std::vector<iView*> views;
 
         void tryMatch(Archetype* _archetype);
+
+        auto registerView(iView* _view) -> size_t{
+            views.push_back(_view);
+            return views.size()-1;
+        }
+
+        //swap and pop
+        void unregisterView(iView* _view) {
+            size_t index = _view->view_index;
+
+            views[index] = views.back();
+            views[index]->view_index = index;
+            
+            views.pop_back();
+        }
+
+        template<typename... Components>
+        auto view() -> QueryView<Components...> {
+             return QueryView<Components...>(matching_archetypes);
+        }
+
+        
+        template<typename... Components>
+        auto view() const -> const QueryView<const Components...> {
+            return const QueryView<const Components...>(matching_archetypes);
+        }
+
     };
 
     /////////////////////////////////////////////////////////////////////////
@@ -177,9 +333,6 @@ public:
 
     /////////////////////////////////////////////////////////////////////////
 
-    //don't think there's a better way to connect a signature to an archetype
-    //systems should not have to do "get archetype" through query each and every frame
-    //the pointer should be saved or subscribed to after an inital "ensureArchetype"
     std::unordered_map<Signature, Archetype*, SignatureHash> signature_map;
 
     std::vector<std::unique_ptr<Archetype>> archetypes;
@@ -212,7 +365,6 @@ public:
     template<typename... Components> void addComponents(Entity _entity, Components&&... _data);
     template<typename... Components> void removeComponents(Entity _entity);
 
-
     template<typename Excluded>
     struct Exclude{};
 
@@ -223,6 +375,47 @@ public:
     auto query(Exclude<Excluded...>) -> Query*;
 
     auto query(const Signature _signature) -> Query*;
+
+    template<typename... T>
+    using QueryResult = Query::QueryView<T...>;
 };
+
+//TODO
+//General
+//  *   look into component inheritance some more, idk if worth cause of cache innefficiency
+//      shared components maybe?
+//  
+//  *   multithreading, need to know which systems "set" vs "get" components (wait for lesson)
+// 
+//  *   always look for api improvements
+// 
+//  *   handling different queries of different types, event + component query = inefficient in current sys
+// 
+//  *   handling state, active & inactive registry? (expensive)
+// 
+//  *   update command buffer, maybe wait for multithreading implementation first
+// 
+//Registry 
+//  *   singleton components, like delta time
+// 
+//  *   check how tag components / empty structs work with chunk memory management
+// 
+//  *   helper function to move from one archetype to another with a single call
+//      needed for when calculating final signature in the buffer by adding 
+//      all the "add" and "remove" component calls together
+// 
+//  *   override/ensureComponents helper, would guarrantee that an entity has a component with input values in 1 call
+//      entity has a PositionComponent with x = 10 
+//      user calls ensureComponent<Position>(50,0,0) 
+//      entity WILL have a PositionComponent with x = 50
+// 
+// 
+//System
+//  *   can currently cache archetypes via subscription
+//      maybe add some way to cache component indexes for each archetype?
+//      would skip getLocalIndex calls every frame
+//
+
+
 
 #include "RegistryNEW.inl"
