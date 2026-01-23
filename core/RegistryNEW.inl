@@ -190,18 +190,18 @@ void Registry::removeComponents(Entity _entity) {
 
 
 template<typename... Components>
-auto Registry::query() -> Query* {
+auto Registry::query() -> Query::QueryView<Components...> {
     Signature signature;
     (signature.set(getComponentTypeID<Components>()), ...);
 
-    return query(signature);
+    return Query::QueryView<Components...>(query(signature));
 }
 
 template<typename... Included, typename... Excluded>
-auto Registry::query(Exclude<Excluded...>) -> Query* {
+auto Registry::query(Exclude<Excluded...>) -> Query::QueryView<Included...> {
     Signature signature;
     (signature.set(getComponentTypeID<Included>()), ...);
     (signature.reset(getComponentTypeID < Excluded()), ...);
 
-    return query(signature);
+    return Query::QueryView<Included...>(query(signature));
 }

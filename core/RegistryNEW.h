@@ -369,10 +369,10 @@ public:
     struct Exclude{};
 
     template<typename... Components>
-    auto query() -> Query*;
+    auto query() -> Query::QueryView<Components...>;
 
     template<typename... Included, typename... Excluded>
-    auto query(Exclude<Excluded...>) -> Query*;
+    auto query(Exclude<Excluded...>) -> Query::QueryView<Included...>;
 
     auto query(const Signature _signature) -> Query*;
 
