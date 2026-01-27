@@ -1,7 +1,6 @@
 #include "RegistryNEW.h"
 
 
-
 /////////////////////////////////////////////////////////////////////////
 //ComponentArray
 /////////////////////////////////////////////////////////////////////////
@@ -247,7 +246,7 @@ void Registry::Query::tryMatch(Archetype* _archetype) {
     if ((_archetype->signature & signature) != signature)
         return;
     
-    archetype_matches.push_back(_archetype);
+    matching_archetypes.push_back(_archetype);
 
     for (auto& view : views) {
         view->pushArchetype(_archetype);
@@ -308,7 +307,7 @@ void Registry::destroyEntity(Entity _entity) {
 
     Entity moved_entity = record.chunk->swapPop(record.index);
 
-    if (!moved_entity.isNull())
+    if (moved_entity == Entity::Null())
         records[moved_entity.id].index = record.index;
 
     free_ids.push_back(_entity.id);
@@ -360,3 +359,5 @@ auto Registry::query(const Signature _signature) -> Query* {
     query_subscriptions.push_back(std::move(new_query));
     return query_ptr;
 }
+
+ComponentInfo* Registry::info_list[MAX_COMPONENTS] = {};

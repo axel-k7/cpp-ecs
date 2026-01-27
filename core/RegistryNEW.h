@@ -1,3 +1,5 @@
+#pragma once
+
 #include <bitset>
 #include <vector>
 #include <unordered_map>
@@ -6,7 +8,6 @@
 #include <atomic>
 #include <array>
 #include <algorithm>
-#include <bit>
 
 #include "Entity.h"
 
@@ -80,7 +81,7 @@ using Signature = std::bitset<MAX_COMPONENTS>;
 
 struct SignatureHash {
     size_t operator()(const Signature& _signature) const {
-        return std::hash<uint32_t>{}(_signature.to_ullong());
+        return std::hash<unsigned long long>{}(_signature.to_ullong());
     }
 };
 
@@ -164,6 +165,10 @@ public:
             virtual ~iView() = default;
             virtual void pushArchetype(Archetype* _archetype) = 0;
 
+            iView(Query* _owner) 
+                : query_owner(_owner)
+            { }
+
             Query* query_owner;
             size_t view_index;
         };
@@ -198,9 +203,10 @@ public:
                     Chunk& chunk = match.archetype->chunks[chunk_index];
 
                     return std::forward_as_tuple(
+                        chunk.getEntities()[entity_index],
                         (*static_cast<Components*>(
                             chunk.component_arrays[match.component_indices[Indices]].get(entity_index))
-                            )...
+                        )...
                     );
                 }
 
@@ -255,8 +261,8 @@ public:
                 }
             };
 
-            QueryView(Query* _query) 
-                : query_owner(_query)
+            QueryView(Query* _owner) 
+                : iView(_owner)
             {
                 matches.reserve(query_owner->matching_archetypes.size());
 
@@ -268,7 +274,7 @@ public:
             }
 
             ~QueryView() {
-                query->unregisterView(this);
+                query_owner->unregisterView(this);
             }
 
             void pushArchetype(Archetype* _archetype) {
@@ -341,7 +347,7 @@ public:
     //atomic = multiple threads can use it at the same time
     static inline std::atomic<uint32_t> type_id;
 
-    ComponentInfo* info_list[MAX_COMPONENTS];
+    static ComponentInfo* info_list[MAX_COMPONENTS];
 
     uint32_t next_id = 0;
     std::vector<uint32_t> free_ids;
@@ -364,6 +370,7 @@ public:
 
     template<typename... Components> void addComponents(Entity _entity, Components&&... _data);
     template<typename... Components> void removeComponents(Entity _entity);
+    template<typename Component> auto tryGetComponent(Entity _entity) -> Component*;
 
     template<typename Excluded>
     struct Exclude{};

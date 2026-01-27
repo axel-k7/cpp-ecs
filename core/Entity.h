@@ -17,4 +17,9 @@ struct Entity {
     operator uint32_t() const {
         return id;
     }
+
+    static auto Null() -> Entity {
+        return { UINT32_MAX, UINT32_MAX };
+    }
+
 };

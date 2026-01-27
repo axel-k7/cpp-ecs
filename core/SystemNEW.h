@@ -33,8 +33,8 @@ public:
 
     Registry::QueryResult<ExampleComponent1, ExampleComponent2> query;
 
-    void update(const float& _dt) override {
-        for (auto [component_1, component_2] : query) {
+    void update(const float& /*_dt*/) override {
+        for (auto [entity, component_1, component_2] : query) {
             component_1.component_data++;
             std::cout << component_2.other_data;
         }

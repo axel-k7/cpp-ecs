@@ -13,7 +13,7 @@ void ComponentInfo::setInfo(uint32_t _id) {
     element_size = sizeof(T);
     element_alignment = alignof(T);
 
-    if (!std::is_trivially_destructible<T>) {
+    if (!std::is_trivially_destructible<T>::value) {
         destructor = [](void* _object_ptr) {
             static_cast<T*>(_object_ptr)->~T();
             };
@@ -51,7 +51,7 @@ auto ComponentView<T>::operator[](size_t _index) const -> const T& {
 
 template<typename T>
 void Registry::Chunk::createAt(size_t _index, size_t _array_index, T&& _data) {
-    new (component_arrays[_array_index].get(_index)) T(std::forward<T>(_data));
+    new (component_arrays[_array_index-1].get(_index)) T(std::forward<T>(_data));
 }
 
 
@@ -86,8 +86,22 @@ auto Registry::Archetype::getLocalIndex() const -> size_t {
 
 template<typename T>
 static auto Registry::getComponentTypeID() -> uint32_t {
-    static uint32_t id = type_id.fetch_add(1);
-    return id;
+    //static makes this lambda only run once per type T
+
+    static uint32_t(*create_id)() = []() {
+        uint32_t new_id = type_id.fetch_add(1);
+
+        auto* new_info = new ComponentInfo();
+
+        new_info->setInfo<T>(new_id);
+
+        Registry::info_list[new_id] = new_info;
+
+        return new_id;
+    };
+    
+
+    return create_id();
 }
 
 template<typename... Components>
@@ -125,7 +139,10 @@ void Registry::addComponents(Entity _entity, Components&&... _data) {
     //running this through a lambda inside a fold expression to handle
     //every component in the _data parameter pack
 
-    const auto& create_new = [&]<typename T>(T && _data) {
+    //would use templated lambda if c++20
+
+    const auto& create_new = [&](auto&& _data) {
+        using T = decltype(_data);
         using Component = std::decay_t<T>;
         uint32_t type = Registry::getComponentTypeID<Component>();
 
@@ -188,6 +205,19 @@ void Registry::removeComponents(Entity _entity) {
     updateEntityRecord(_entity, target_archetype, &target_chunk, target_index);
 }
 
+template<typename Component> 
+auto Registry::tryGetComponent(Entity _entity) -> Component* {
+    EntityRecord& record = records[_entity.id];
+    const auto& type = getComponentTypeID<Component>();
+
+    if (record.archetype->signature.test(type) == 0)
+        return nullptr;
+
+    const size_t& local_index = record.archetype->getLocalIndex(type);
+    
+    return static_cast<Component*>(record.chunk->component_arrays[local_index].get(record.index));
+};
+
 
 template<typename... Components>
 auto Registry::query() -> Query::QueryView<Components...> {
@@ -201,7 +231,7 @@ template<typename... Included, typename... Excluded>
 auto Registry::query(Exclude<Excluded...>) -> Query::QueryView<Included...> {
     Signature signature;
     (signature.set(getComponentTypeID<Included>()), ...);
-    (signature.reset(getComponentTypeID < Excluded()), ...);
+    (signature.reset(getComponentTypeID <Excluded>()), ...);
 
     return Query::QueryView<Included...>(query(signature));
 }
