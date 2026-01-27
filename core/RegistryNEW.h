@@ -137,6 +137,7 @@ public:
         std::vector<Chunk> chunks;
 
         std::vector<const ComponentInfo*> active_components;
+        std::unordered_map<const uint32_t, const size_t> id_to_index;
 
         Archetype(const Signature& _signature, const Registry* _registry);
 
@@ -370,6 +371,8 @@ public:
 
     template<typename... Components> void addComponents(Entity _entity, Components&&... _data);
     template<typename... Components> void removeComponents(Entity _entity);
+    void moveEntity(Entity _entity, const Signature& _target_signature);
+
     template<typename Component> auto tryGetComponent(Entity _entity) -> Component*;
 
     template<typename Excluded>
