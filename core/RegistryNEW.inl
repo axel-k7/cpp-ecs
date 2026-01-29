@@ -78,20 +78,21 @@ template<typename T>
 static auto Registry::getComponentTypeID() -> uint32_t {
     //static makes this lambda only run once per type T
 
-    static uint32_t(*create_id)() = []() {
-        uint32_t new_id = type_id.fetch_add(1);
+    //to "clean" the type, T become same as T&
+    using cleanT = std::decay<T>;
 
+    static uint32_t id = type_id.fetch_add(1);
+
+    static bool set_info = []() {
         auto* new_info = new ComponentInfo();
+        new_info->setInfo<T>(id);
+        Registry::info_list[id] = new_info;
 
-        new_info->setInfo<T>(new_id);
-
-        Registry::info_list[new_id] = new_info;
-
-        return new_id;
-    };
+        return true;
+    }();
     
 
-    return create_id();
+    return id;
 }
 
 template<typename... Components>
@@ -101,10 +102,12 @@ void Registry::addComponents(Entity _entity, Components&&... _data) {
 
     EntityRecord& prev_record = records[_entity.id];
 
-    Signature prev_signature = prev_record.archetype ? prev_record.archetype->signature : Signature{};
+    //get final signature
+    //start with copying current sig or create new
+    const Signature prev_signature = prev_record.archetype ? prev_record.archetype->signature : Signature{};
     Signature target_signature = prev_signature;
 
-    (target_signature.set(getComponentTypeID<Components>()), ...);
+    (target_signature.set(getComponentTypeID<std::decay_t<Components>>()), ...);
 
     moveEntity(_entity, target_signature);
 
@@ -124,7 +127,7 @@ void Registry::addComponents(Entity _entity, Components&&... _data) {
         if (prev_signature.test(type))
             return; //if component already exists
 
-        size_t local_index = record.archetype->getLocalIndex<Component>();
+        size_t local_index = record.archetype->getLocalIndex(type);
         record.chunk->createAt(record.index, local_index, std::forward<T>(_data));
     };
 
@@ -162,7 +165,9 @@ auto Registry::tryGetComponent(Entity _entity) -> Component* {
 
     const size_t& local_index = record.archetype->getLocalIndex(type);
     
-    return static_cast<Component*>(record.chunk->component_arrays[local_index].get(record.index));
+    auto a = static_cast<Component*>(record.chunk->component_arrays[local_index].get(record.index));
+
+    return a;
 };
 
 

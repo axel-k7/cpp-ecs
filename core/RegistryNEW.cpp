@@ -146,7 +146,7 @@ auto Registry::Chunk::swapPop(size_t _index) -> Entity {
     if (_index > last_index)
         return swapped_entity;
 
-    std::vector<Entity>& entities = getEntities();
+    Entity* entities = getEntities();
 
     if (_index < last_index) {
         //swap entity ids
@@ -211,7 +211,7 @@ Registry::Archetype::Archetype(const Signature& _signature, const Registry* _reg
 
     for (size_t i = 0; i < active_components.size(); ++i) {
         //populate local ids after sorting
-        id_to_index[active_components[i].id] = i;
+        id_to_index[active_components[i]->id] = i;
     }
 }
 
@@ -233,13 +233,7 @@ auto Registry::Archetype::getLocalIndex(uint32_t _id) const -> size_t {
     if (!signature.test(_id))
         return SIZE_MAX;
 
-    if (_id == 0)
-        return 0;
-
-    Signature mask = signature;
-    mask <<= (MAX_COMPONENTS - _id);
-
-    return mask.count();
+    return id_to_index.find(_id)->second;
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -276,13 +270,11 @@ void Registry::moveEntity(Entity _entity, const Signature& _target_signature) {
 
     EntityRecord& record = records[_entity.id];
 
-    //get final signature
-    //start with current sig or create new
-
     if (record.archetype && _target_signature == record.archetype->signature)
         return; //if call has no change on current components
 
-    Archetype* target_archetype = ensureArchetype(target_signature);
+    Archetype* target_archetype = ensureArchetype(_target_signature);
+
     Chunk& target_chunk = target_archetype->ensureChunk();
     size_t target_index = target_chunk.count;
 
@@ -321,12 +313,12 @@ auto Registry::ensureArchetype(const Signature _signature) -> Archetype* {
     Archetype* archetype_ptr = new_archetype.get();
 
     signature_map[_signature] = archetype_ptr;
+    archetypes.push_back(std::move(new_archetype));
 
     for (auto&& query : query_subscriptions) {
         query->tryMatch(archetype_ptr);
     }
 
-    archetypes.push_back(std::move(new_archetype));
     return archetype_ptr;
 }
 

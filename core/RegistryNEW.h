@@ -106,7 +106,7 @@ public:
         void* entity_buffer; //need to keep track of where the entities are, component arrays know where they are after construction
         std::vector<ComponentArray> component_arrays;
 
-        size_t count;
+        size_t count = 0;
         size_t capacity;
 
         size_t highest_alignment;
@@ -133,11 +133,11 @@ public:
     /////////////////////////////////////////////////////////////////////////
 
     struct Archetype {
-        const Signature& signature;
+        const Signature signature;
         std::vector<Chunk> chunks;
 
         std::vector<const ComponentInfo*> active_components;
-        std::unordered_map<const uint32_t, const size_t> id_to_index;
+        std::unordered_map<uint32_t, size_t> id_to_index;
 
         Archetype(const Signature& _signature, const Registry* _registry);
 
@@ -356,7 +356,7 @@ public:
     std::vector<EntityRecord> records;
 
     template<typename T>
-    static auto getComponentTypeID() -> uint32_t;
+    static inline auto getComponentTypeID() -> uint32_t;
     auto getComponentInfo(uint32_t _component_id) const -> ComponentInfo*;
     auto ensureArchetype(const Signature _signature) -> Archetype*;
 

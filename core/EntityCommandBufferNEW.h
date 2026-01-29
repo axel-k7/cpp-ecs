@@ -28,7 +28,7 @@ public:
     auto createEntity(Components&&... _components) -> Entity {
         Entity entity = registry->allocateEntity();
 
-        (addComponent(entity, std::forward<Components>(_components)), ...);
+        (addComponent<Components>(entity, std::forward<Components>(_components)), ...);
 
         return entity;
     }
@@ -46,13 +46,17 @@ public:
 
         change.add.set(type);
 
-        change.constructors.emplace_back(
+        change.constructors.emplace_back(EntityChange::ComponentConstructor{
             type,
-            [this, data = T(std::forward<Args>(_args)...)](Entity _entity) mutable {
-                if (!registry->tryGetComponent<T>(_entity))
-                    registry->addComponents<T>(_entity, std::move(data));
+            [type, this, data = T(std::forward<Args>(_args)...)](Entity _entity) mutable {
+                auto& record = registry->records[_entity.id];
+                const size_t local_index = record.archetype->getLocalIndex(type);
+
+                //think adding 2 components of same type in 1 frame will make this explode
+                //difficult to safety check void*
+                record.chunk->createAt(record.index, local_index, std::move(data));
             }
-        );
+        });
     }
 
     template<typename T>

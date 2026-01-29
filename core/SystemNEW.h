@@ -1,19 +1,22 @@
 #pragma once
 
 #include "RegistryNEW.h"
+#include "EntityCommandBufferNEW.h"
 
 #include <iostream>
 
 class System {
 public:
-    System(std::shared_ptr<Registry> _registry)
+    System(std::shared_ptr<Registry> _registry, std::shared_ptr<EntityCommandBuffer> _buffer)
         : registry(_registry)
+        , buffer(_buffer)
     {}
 
     virtual ~System() = default;
     virtual void update(const float& _delta_time) = 0;
 
     std::shared_ptr<Registry> registry;
+    std::shared_ptr<EntityCommandBuffer> buffer;
 };
 
 struct ExampleComponent1 {
@@ -26,8 +29,8 @@ struct ExampleComponent2 {
 
 class ExampleSystem : public System {
 public:
-    ExampleSystem(std::shared_ptr<Registry> _registry)
-        : System(_registry)
+    ExampleSystem(std::shared_ptr<Registry> _registry, std::shared_ptr<EntityCommandBuffer> _buffer)
+        : System(_registry, _buffer)
         , query(_registry->query<ExampleComponent1, ExampleComponent2>())
     {}
 
