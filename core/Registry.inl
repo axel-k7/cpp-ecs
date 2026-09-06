@@ -1,205 +1,191 @@
 #pragma once
 
 #include "Registry.h"
-#include <iostream>
 
-//---------------------------------------------------------------------------------------------------------------------
-//ENTITY
+/////////////////////////////////////////////////////////////////////////
+//ComponentInfo
+/////////////////////////////////////////////////////////////////////////
 
+template<typename T>
+void ComponentInfo::setInfo(uint32_t _id) {
+    id = _id;
+
+    element_size = sizeof(T);
+    element_alignment = alignof(T);
+
+    if (!std::is_trivially_destructible<T>::value) {
+        destructor = [](void* _object_ptr) {
+            static_cast<T*>(_object_ptr)->~T();
+            };
+    } else { 
+        destructor = nullptr; 
+    }
+
+    move = [](void* _source, void* _destination) {
+        new (_destination) T(std::move(*static_cast<T*>(_source)));
+    };
+}
+
+/////////////////////////////////////////////////////////////////////////
+//ComponentView
+/////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+ComponentView<T>::ComponentView(ComponentArray& _component_array)
+    : component_array(_component_array)
+{ }
+
+template<typename T>
+auto ComponentView<T>::operator[](size_t _index) -> T& {
+    return *static_cast<T*>(component_array.get(_index));
+}
+
+template<typename T>
+auto ComponentView<T>::operator[](size_t _index) const -> const T& {
+    return *static_cast<const T*>(component_array.get(_index));
+}
+
+/////////////////////////////////////////////////////////////////////////
+//Chunk
+/////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+void Registry::Chunk::createAt(size_t _index, size_t _array_index, T&& _data) {
+    new (component_arrays[_array_index].get(_index)) T(std::forward<T>(_data));
+}
+
+
+/////////////////////////////////////////////////////////////////////////
+//Archetype
+/////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+auto Registry::Archetype::getLocalIndex() const -> size_t {
+    uint32_t type = Registry::getComponentTypeID<T>();
+
+    if (!signature.test(type))
+        return SIZE_MAX;
+
+    return id_to_index.find(type)->second;
+}
+
+
+/////////////////////////////////////////////////////////////////////////
+//Registry
+/////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+static auto Registry::getComponentTypeID() -> uint32_t {
+    //static makes this lambda only run once per type T
+
+    //to "clean" the type, T become same as T&
+    using cleanT = std::decay<T>;
+
+    static uint32_t id = type_id.fetch_add(1);
+
+    static bool set_info = []() {
+        auto* new_info = new ComponentInfo();
+        new_info->setInfo<T>(id);
+        Registry::info_list[id] = new_info;
+
+        return true;
+    }();
+    
+
+    return id;
+}
 
 template<typename... Components>
-auto Registry::createEntity(Components&&... _components) -> Entity {
-    Signature signature;
-    (signature.set(getComponentTypeID<Components>()), ...);
-
-    Entity entity = allocateEntity();
-    Archetype* archetype = getArchetype(signature);
-
-    size_t new_index = archetype->entities.size();
-    updateEntityRecord(entity, archetype, new_index);
-
-    archetype->entities.push_back(entity);
-
-    (addComponentToArray<Components>(archetype, std::forward<Components>(_components)), ...);
-
-    onEntityCreated.trigger(entity);
-
-    return entity;
-}
-
-
-//ENTITY END
-//---------------------------------------------------------------------------------------------------------------------
-//COMPONENTS
-
-
-template<typename T, typename... Args>
-void Registry::addComponent(const Entity& _entity, Args&&... _args) {
-    uint32_t type = getComponentTypeID<T>();
-    Signature new_signature = records[_entity.id].signature;
-    if (new_signature.test(type))
+void Registry::addComponents(Entity _entity, Components&&... _data) {
+    if (!entityExists(_entity))
         return;
-    
-    new_signature.set(type, true);
-    
-    Archetype* target = moveEntity(_entity, new_signature);
-    
-    sComponentArray* array = target->getArray<T>();
-    if (!array) {
-        auto new_array = std::make_unique<ComponentArray<T>>();
-        array = new_array.get();
-        target->component_arrays[type] = std::move(new_array);
-    }
-    
-    array->addFrom((void*)(new T(std::forward<Args>(_args)...)));
-    
-    if (onComponentAdded.count(type))
-        onComponentAdded.at(type).trigger(_entity, type);
+
+    EntityRecord& prev_record = records[_entity.id];
+
+    //get final signature
+    //start with copying current sig or create new
+    const Signature prev_signature = prev_record.archetype ? prev_record.archetype->signature : Signature{};
+    Signature target_signature = prev_signature;
+
+    (target_signature.set(getComponentTypeID<std::decay_t<Components>>()), ...);
+
+    moveEntity(_entity, target_signature);
+
+    EntityRecord& record = records[_entity.id]; //update record variable after moving entity
+
+    //construct new components not present in the source archetype
+    //running this through a lambda inside a fold expression to handle
+    //every component in the _data parameter pack
+
+    //would use templated lambda if c++20
+
+    const auto& create_new = [&](auto&& _data) {
+        using T = decltype(_data);
+        using Component = std::decay_t<T>;
+        const uint32_t type = getComponentTypeID<Component>();
+
+        if (prev_signature.test(type))
+            return; //if component already exists
+
+        size_t local_index = record.archetype->getLocalIndex(type);
+        record.archetype->chunks[record.chunk_index].createAt(record.index, local_index, std::forward<T>(_data));
+    };
+
+    (create_new(std::forward<Components>(_data)), ...);
 }
 
-
-template<typename T>
-void Registry::removeComponent(const Entity& _entity) {
-    removeComponent(_entity, getComponentTypeID<T>());
-}
-
-
-template<typename T>
-auto Registry::getComponent(const Entity& _entity) -> T& {
-    assert(entityExists(_entity));
+template<typename... Components>
+void Registry::removeComponents(Entity _entity) {
+    if (!entityExists(_entity))
+        return;
 
     EntityRecord& record = records[_entity.id];
-    ComponentArray<T>* array = record.archetype->getArray<T>();
-        
-    return array->get(record.index);
-} 
 
+    if (!record.archetype)
+        return; //if entity doesn't have any components
 
-template<typename T>
-auto Registry::hasComponent(const Entity& _entity) -> bool {
-    assert(entityExists(_entity));
-    const auto& record = records[_entity.id];
+    //get final 
+    Signature target_signature = record.archetype->signature;
+    (target_signature.reset(getComponentTypeID<Components>()), ...);
 
-    return record.signature.test(getComponentTypeID<T>());
+    moveEntity(_entity, target_signature);
 }
 
+template<typename Component> 
+auto Registry::tryGetComponent(Entity _entity) -> Component* {
+    EntityRecord& record = records[_entity.id];
 
+    if (!record.archetype)
+        return nullptr;
 
-//COMPONENTS END
-//---------------------------------------------------------------------------------------------------------------------
-//QUERIES
+    const auto& type = getComponentTypeID<Component>();
 
+    if (record.archetype->signature.test(type) == 0)
+        return nullptr;
 
-    //get bitmask of components and query them
-template<typename... Components>
-auto Registry::query() const -> const std::vector<const Archetype*>& {
-    Signature signature;
-    (signature.set(getComponentTypeID<Components>()), ...);
+    const size_t& local_index = record.archetype->getLocalIndex(type);
+    
+    auto a = static_cast<Component*>(
+        record.archetype->chunks[record.chunk_index].component_arrays[local_index].get(record.index)
+    );
 
-    Signature empty;
-    return query({ signature, empty });
-}
-
-template<typename... Included, typename... Excluded>
-auto Registry::query(Exclude<Excluded...>) const -> const std::vector<const Archetype*>& {
-    Signature include_signature;
-    (include_signature.set(getComponentTypeID<Included>()), ...);
-
-    Signature exclude_signature;
-    (exclude_signature.set(getComponentTypeID<Excluded>()), ...);
-
-    return query({ include_signature, exclude_signature });
-}
-
-
-//QUERIES END
-//---------------------------------------------------------------------------------------------------------------------
-//HELPERS
-
-
-template<typename T>
-auto Registry::getComponentTypeID() -> uint32_t {
-    static const uint32_t type_id = static_cast<uint32_t>(next_type_id++);
-
-    assert(type_id < MAX_COMPONENTS && "component limit reached");
-
-    return type_id;
-}
-
-template<typename T>
-void Registry::addComponentToArray(Archetype* _archetype, const T& _component) {
-    auto* array = _archetype->getArray<T>();
-
-    if (!array) {
-        auto new_array = std::make_unique<ComponentArray<T>>();
-        array = new_array.get();
-        _archetype->component_arrays[getComponentTypeID<T>()] = std::move(new_array);
-    }
-
-    array->add(_component);
+    return a;
 };
 
 
-//HELPERS END
-//--------------------------------------------------------------------------------------------
-//STRUCT METHODS
+template<typename... Components>
+auto Registry::query() -> Query::QueryView<Components...> {
+    Signature signature;
+    (signature.set(getComponentTypeID<Components>()), ...);
 
-template<typename T>
-auto Registry::Archetype::getArray() -> ComponentArray<T>* {
-    auto it = component_arrays.find(Registry::getComponentTypeID<T>());
-
-    if (it != component_arrays.end())
-        return static_cast<ComponentArray<T>*>(it->second.get());
-
-    return nullptr;
+    return Query::QueryView<Components...>(query(signature));
 }
 
+template<typename... Included, typename... Excluded>
+auto Registry::query(Exclude<Excluded...>) -> Query::QueryView<Included...> {
+    Signature signature;
+    (signature.set(getComponentTypeID<Included>()), ...);
+    (signature.reset(getComponentTypeID <Excluded>()), ...);
 
-template<typename T>
-void Registry::ComponentArray<T>::add(const T& _component) {
-    data.push_back(_component);
+    return Query::QueryView<Included...>(query(signature));
 }
-
-template<typename T>
-void Registry::ComponentArray<T>::remove(size_t _index) {
-    data[_index] = data.back();
-    data.pop_back();
-}
-
-template<typename T>
-auto Registry::ComponentArray<T>::get(size_t _index) -> T& {
-    return data[_index];
-}
-
-template<typename T>
-auto Registry::ComponentArray<T>::size() const -> size_t {
-    return data.size();
-}
-
-template<typename T>
-void Registry::ComponentArray<T>::swapElements(size_t _a, size_t _b) {
-    std::swap(data[_a], data[_b]);
-}
-
-template<typename T>
-void Registry::ComponentArray<T>::removeLast() {
-    data.pop_back();
-}
-
-template<typename T>
-void Registry::ComponentArray<T>::addFrom(void* _component) {
-    add(*static_cast<T*>(_component));
-}
-
-template<typename T>
-auto Registry::ComponentArray<T>::getRaw(size_t _index) -> void* {
-    return &data[_index];
-}
-
-template<typename T>
-auto Registry::ComponentArray<T>::cloneEmpty() const -> sComponentArray* {
-    return new ComponentArray<T>();
-}
-
-
-//STRUCT METHODS END

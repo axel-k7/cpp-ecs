@@ -1,225 +1,332 @@
 #include "Registry.h"
 
-Registry::~Registry() {
-    signature_map.clear();
-    archetypes.clear();
-}
 
+/////////////////////////////////////////////////////////////////////////
+//ComponentArray
+/////////////////////////////////////////////////////////////////////////
 
-//---------------------------------------------------------------------------------------------------------------------
-//ENTITY
+ComponentArray::ComponentArray(void* _data_buffer, const ComponentInfo* _info)
+    : data_buffer(_data_buffer)
+    , info(_info)
+{
 
-
-auto Registry::createEntity() -> Entity {
-    Entity entity = allocateEntity();
-    moveEntity(entity, Signature{});
-
-    onEntityCreated.trigger(entity);
-
-    return entity;
 };
 
-
-auto Registry::createEntity(const Signature& _signature) -> Entity {
-    Entity entity = allocateEntity();
-    Archetype* archetype = getArchetype(_signature);
-
-    size_t new_index = archetype->entities.size();
-    updateEntityRecord(entity, archetype, new_index);
-
-    onEntityCreated.trigger(entity);
-
-    return entity;
+auto ComponentArray::get(size_t _index) -> void* {
+    return static_cast<uint8_t*>(data_buffer) + (info->element_size * _index);
 }
 
+/////////////////////////////////////////////////////////////////////////
+//Chunk
+/////////////////////////////////////////////////////////////////////////
 
-void Registry::destroyEntity(const Entity& _entity) {
-    assert(entityExists(_entity));
-
-    onEntityDestroyed.trigger(_entity);
-
-    moveEntity(_entity, Signature{});
-
-    invalidateEntity(_entity);
-};
-
-
-//ENTITY END
-//---------------------------------------------------------------------------------------------------------------------
-//COMPONENTS
-
-
-void Registry::addComponent(const Entity& _entity, uint32_t _type, sComponentArray* _component) {
-    assert(entityExists(_entity));
-
-    Signature new_signature = records[_entity.id].signature;
-    if (new_signature.test(_type))
-        return;
-
-    new_signature.set(_type, true);
-
-    Archetype* target = moveEntity(_entity, new_signature);
-
-    sComponentArray* array = target->ensureComponentArray(_type, _component);
-    array->addFrom(_component);
-
-    if (onComponentAdded.count(_type))
-        onComponentAdded.at(_type).trigger(_entity, _type);
-}
-
-
-void Registry::removeComponent(const Entity& _entity, uint32_t _type) {
-    assert(entityExists(_entity));
+Registry::Chunk::Chunk(const std::vector<const ComponentInfo*> _components, size_t _capacity)
+    : capacity(_capacity)
+{
+    //calculate size needed for the chunk
+    size_t total_size = sizeof(Entity) * capacity;
+    highest_alignment = alignof(Entity);
     
-    Signature new_signature = records[_entity.id].signature;
+    for (const auto& component : _components) {
+        if (component->element_alignment > highest_alignment)
+            highest_alignment = component->element_alignment;
     
-    if (!new_signature.test(_type))
-        return;
-
-    if (onComponentRemoved.count(_type))
-        onComponentRemoved.at(_type).trigger(_entity, _type);
-    
-    new_signature.set(_type, false);
-    moveEntity(_entity, new_signature);
-}
-
-
-auto Registry::getComponent(const Entity& _entity, uint32_t _type) -> void* {
-    assert(entityExists(_entity));
-
-    EntityRecord& record = records[_entity.id];
-    auto it = record.archetype->component_arrays.find(_type);
-    if (it == record.archetype->component_arrays.end()) {
-        return nullptr;
-    } 
-
-    return it->second->getRaw(record.index);
-} 
-
-
-auto Registry::hasComponent(const Entity& _entity, uint32_t _type) -> bool {
-    assert(entityExists(_entity));
-
-    return records[_entity.id].signature.test(_type);
-}
-
-
-//COMPONENTS END
-//---------------------------------------------------------------------------------------------------------------------
-//QUERIES
-
-
-    //query archetype of same bitmask
-auto Registry::query(QueryFilter _filter) const -> const std::vector<const Archetype*>& {
-    auto it = query_cache.find(_filter);
-    if (it != query_cache.end())
-        return it->second;
-
-
-    std::vector<const Archetype*> result;
-
-    for (const auto& archetype_ptr : archetypes) {
-        Archetype* archetype = archetype_ptr.get();
-        bool has_include = (archetype->signature & _filter.include) == _filter.include;
-        bool has_exclude = (archetype->signature & _filter.exclude) != 0;
-
-        if (has_include && !has_exclude)
-            result.push_back(archetype);
+        //check for padding
+        const size_t& padding = (component->element_alignment - (total_size % component->element_alignment)) % component->element_alignment;
+        total_size += padding + component->element_size * capacity;
     }
+    //--
     
-    auto [_it, _] = query_cache.emplace(_filter, std::move(result));
-    return _it->second;
+    
+    //allocate space for chunk and save its address
+    chunk_buffer = operator new(total_size, std::align_val_t(highest_alignment));
+    uint8_t* curr_address = static_cast<uint8_t*>(chunk_buffer);
+    //---
+    
+    
+    //data placement within the chunk
+    entity_buffer = curr_address;
+    curr_address += sizeof(Entity) * capacity;
+    
+    for (const auto& component : _components) {
+        const std::uintptr_t& address_value = reinterpret_cast<std::uintptr_t>(curr_address);
+        const size_t& padding = (component->element_alignment - (address_value % component->element_alignment)) % component->element_alignment;
+    
+        curr_address += padding;
+    
+        component_arrays.push_back(
+            ComponentArray(curr_address, component)
+        );
+    
+        curr_address += component->element_size * capacity;
+    }
+    //--
+};
+
+Registry::Chunk::Chunk(Chunk&& _source)
+    : component_arrays(std::move(_source.component_arrays))
+    , chunk_buffer(_source.chunk_buffer)
+    , entity_buffer(_source.entity_buffer)
+    , count(_source.count)
+    , capacity(_source.capacity)
+    , highest_alignment(_source.highest_alignment)
+{
+    //and nullify source chunk
+    _source.chunk_buffer = nullptr;
+    _source.count = 0;
 }
 
-auto Registry::query(const uint32_t& _entity_id) const -> const EntityRecord& {
-    return records[_entity_id];
+Registry::Chunk::~Chunk(){
+    //loop through all arrays and call destructors
+    //then free the chunk buffer
+    for (auto& component_array : component_arrays) {
+        if (!component_array.info->destructor)
+            continue;
+
+        for (size_t i = 0; i < count; ++i) {
+            component_array.info->destructor(component_array.get(i));
+        }
+    }
+
+    if (chunk_buffer)
+        operator delete(chunk_buffer, std::align_val_t(highest_alignment));
 }
 
-//QUERIES END
-//---------------------------------------------------------------------------------------------------------------------
-//ENTITY HELPERS
+//destroy self, steal data, nullify source
+auto Registry::Chunk::operator=(Chunk&& _source) -> Chunk& {
+    if (this != &_source) {
+        this->~Chunk();
 
-auto Registry::moveEntity(Entity _entity, const Signature& _new_signature) -> Archetype* {
-    EntityRecord& record = records[_entity.id];
-    Archetype* curr_archetype = record.archetype;
-    Archetype* target_archetype = getArchetype(_new_signature);
+        component_arrays = std::move(_source.component_arrays);
+        chunk_buffer = _source.chunk_buffer;
+        entity_buffer = _source.entity_buffer;
+        count = _source.count;
+        capacity = _source.capacity;
+        highest_alignment = _source.highest_alignment;
 
-    if (curr_archetype == target_archetype)
-        return target_archetype;
+        _source.chunk_buffer = nullptr;
+        _source.count = 0;
+    }
 
-    if (curr_archetype != target_archetype && curr_archetype) {
-        moveToArchetype(_entity, curr_archetype, record.index, target_archetype);
+    return *this;
+}
+
+void Registry::Chunk::moveComponent(
+    size_t _index, size_t _array_index,
+    Chunk* _source, size_t _source_index, size_t _source_array_index,
+    const ComponentInfo* _info
+) {
+    void* source = _source->component_arrays[_source_array_index].get(_source_index);
+
+    //move then clean up previous location
+
+    _info->move(
+        source,
+        component_arrays[_array_index].get(_index)
+    );
+
+    if (_info->destructor)
+        _info->destructor(source);
+}
+
+
+void Registry::Chunk::destroyAt(size_t _index, const std::vector<const ComponentInfo*>& _components) {
+    for (size_t i = 0; i < _components.size(); ++i) {
+        if (_components[i]->destructor) {
+            _components[i]->destructor(component_arrays[i].get(_index));
+        }
+    }
+}
+
+auto Registry::Chunk::swapPop(size_t _index) -> Entity {
+    Entity swapped_entity = Entity::Null();
+
+    const size_t last_index = count - 1;
+
+    if (_index > last_index)
+        return swapped_entity;
+
+    Entity* entities = getEntities();
+
+    if (_index < last_index) {
+        //swap entity ids
+        swapped_entity = entities[last_index];
+        entities[_index] = swapped_entity;;
+
+        //move components
+        for (auto& array : component_arrays) {
+            void* target = array.get(_index);
+            void* last = array.get(last_index);
+
+            if (array.info->destructor)
+                array.info->destructor(target); //destroy target element
+
+            array.info->move(last, target); //swap last element into the now empty slot
+    
+            if (array.info->destructor)
+                array.info->destructor(last);   //clean up old position, probably dont need to do this
+        }
     }
     else {
-        record.index = uint32_t(target_archetype->entities.size());
-        target_archetype->entities.push_back(_entity);
-        record.archetype = target_archetype;
+        for (auto& array : component_arrays) {
+            if (!array.info->destructor)
+                continue;
+
+            array.info->destructor(array.get(_index));
+        }
     }
 
-    record.signature = _new_signature;
+    count--;
+    return swapped_entity;
+}
 
-    invalidateQueryCache();
+auto Registry::Chunk::getRaw(size_t _index, size_t _array_index) -> void* {
+    return component_arrays[_array_index].get(_index);
+};
 
-    return target_archetype;
+auto Registry::Chunk::getEntities() -> Entity* {
+    return static_cast<Entity*>(entity_buffer);
+};
+
+void Registry::Chunk::pushEntity(Entity _entity) {
+    getEntities()[count] = _entity;
+    count++;
+}
+
+/////////////////////////////////////////////////////////////////////////
+//Archetype
+/////////////////////////////////////////////////////////////////////////
+
+Registry::Archetype::Archetype(const Signature& _signature, const Registry* _registry)
+    : signature(_signature)
+{
+    for (uint32_t i = 0; i < MAX_COMPONENTS; ++i) {
+        if (signature.test(i)) {
+            active_components.push_back(_registry->getComponentInfo(i));
+        }
+    }
+
+    std::sort(active_components.begin(), active_components.end(),
+        [](const ComponentInfo* _a, const ComponentInfo* _b) {
+            return _a->id < _b->id;
+        }
+    );
+
+    for (size_t i = 0; i < active_components.size(); ++i) {
+        //populate local ids after sorting
+        id_to_index[active_components[i]->id] = i;
+    }
 }
 
 
-void Registry::invalidateEntity(const Entity& _entity) {
-    assert(entityExists(_entity));
+auto Registry::Archetype::ensureChunk() -> size_t {
+    //find first non-filled chunk
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        if (chunks[i].count < chunks[i].capacity)
+            return i;
+    }
+
+    //or create a new one
+    //creating it directly inside of the chunk list through emplace
+    chunks.emplace_back(active_components, CHUNK_CAPACITY);
+    return chunks.size()-1;
+}
+
+
+auto Registry::Archetype::getLocalIndex(uint32_t _id) const -> size_t {
+    if (!signature.test(_id))
+        return SIZE_MAX;
+
+    return id_to_index.find(_id)->second;
+}
+
+/////////////////////////////////////////////////////////////////////////
+//Query
+/////////////////////////////////////////////////////////////////////////
+
+Registry::Query::Query(Signature _signature) 
+    : signature(_signature)
+{}
+
+void Registry::Query::tryMatch(Archetype* _archetype) {
+    if ((_archetype->signature & signature) != signature)
+        return;
+    
+    matching_archetypes.push_back(_archetype);
+
+    for (auto& view : views) {
+        view->pushArchetype(_archetype);
+    }
+
+}
+
+/////////////////////////////////////////////////////////////////////////
+//Registry
+/////////////////////////////////////////////////////////////////////////
+
+auto Registry::getComponentInfo(uint32_t _component_id) const -> ComponentInfo* {
+    return info_list[_component_id];
+}
+
+void Registry::moveEntity(Entity _entity, const Signature& _target_signature) {
+    if (!entityExists(_entity))
+        return;
 
     EntityRecord& record = records[_entity.id];
 
-    record.archetype = nullptr;
-    record.index = 0;
-    record.signature.reset();
-    versions[_entity.id]++;
+    if (record.archetype && _target_signature == record.archetype->signature)
+        return; //if call has no change on current components
 
-    free_ids.push_back(_entity.id);
-    invalidateQueryCache();
+    Archetype* target_archetype = ensureArchetype(_target_signature);
+
+    size_t target_chunk_index = target_archetype->ensureChunk();
+    Chunk& target_chunk = target_archetype->chunks[target_chunk_index];
+    size_t target_index = target_chunk.count;
+
+    //if entity already had components, move them into the new chunk
+    //loop over previous active components -> move
+    if (record.archetype) {
+        Chunk& source_chunk = record.archetype->chunks[record.chunk_index];
+        for (const ComponentInfo* info : record.archetype->active_components) {
+            if (!_target_signature.test(info->id))
+                continue;
+
+            target_chunk.moveComponent(
+                target_index, 
+                target_archetype->getLocalIndex(info->id),
+                &source_chunk, 
+                record.index, 
+                record.archetype->getLocalIndex(info->id),
+                info
+            );
+        }
+    }
+
+    target_chunk.pushEntity(_entity);
+
+    if (record.archetype)
+        eraseChunkEntry(&record.archetype->chunks[record.chunk_index], record.index);
+
+    updateEntityRecord(_entity, target_archetype, target_chunk_index, target_index);
 }
 
+auto Registry::ensureArchetype(const Signature _signature) -> Archetype* {
+    auto it = signature_map.find(_signature);
+    if (it != signature_map.end())
+        return it->second;
 
-void Registry::removeEntityAt(Archetype* _archetype, size_t _index) {
-    size_t last_index = _archetype->entities.size()-1;
+    std::unique_ptr<Archetype> new_archetype = std::make_unique<Archetype>(_signature, this);
+    Archetype* archetype_ptr = new_archetype.get();
 
-    if (_index != last_index) {
-        Entity last_entity = _archetype->entities[last_index];
-        _archetype->entities[_index] = last_entity;
-        records[last_entity.id].index = uint32_t(_index);
-        
-        for (auto& [_, array] : _archetype->component_arrays)    
-            array->swapElements(_index, last_index); 
+    signature_map[_signature] = archetype_ptr;
+    archetypes.push_back(std::move(new_archetype));
+
+    for (auto&& query : query_subscriptions) {
+        query->tryMatch(archetype_ptr);
     }
 
-    for (auto& [_, array] : _archetype->component_arrays) {
-        array->removeLast();
-    }
-
-    _archetype->entities.pop_back();
-};
-
-
-void Registry::updateEntityRecord(Entity _entity, Archetype* _new, size_t _new_index) {
-    auto& record = records[_entity.id];
-    record.archetype = _new;
-    record.index = uint32_t(_new_index);
-    record.signature = _new->signature;
-};
-
-
-void Registry::moveToArchetype(Entity _entity, Archetype* _source, size_t _source_index, Archetype* _target) {
-    if (_source == _target || !entityExists(_entity))
-        return;
-    
-    size_t new_index = _target->entities.size();
-    _target->entities.push_back(_entity);
-
-    _target->migrateComponents(_source, _source_index);
-
-    removeEntityAt(_source, _source_index);
-
-    updateEntityRecord(_entity, _target, new_index);
-};
+    return archetype_ptr;
+}
 
 
 auto Registry::allocateEntity() -> Entity {
@@ -229,7 +336,8 @@ auto Registry::allocateEntity() -> Entity {
     if (!free_ids.empty()) {
         id = free_ids.back();
         free_ids.pop_back();
-    } else {
+    }
+    else {
         id = next_id++;
         versions.push_back(0);
         records.emplace_back(); //EntityRecord{ nullptr, 0, {} }
@@ -238,65 +346,65 @@ auto Registry::allocateEntity() -> Entity {
     return Entity{ id, versions[id] };
 }
 
-//ENTITY HELPERS END
-//---------------------------------------------------------------------------------------------------------------------
-//REGISTRY HELPERS
+void Registry::destroyEntity(Entity _entity) {
+    if (!entityExists(_entity))
+        return;
+
+    EntityRecord& record = records[_entity.id];
+
+    Entity moved_entity = record.archetype->chunks[record.chunk_index].swapPop(record.index);
+
+    if (moved_entity != Entity::Null())
+        records[moved_entity.id].index = record.index;
+
+    free_ids.push_back(_entity.id);
+    versions[_entity.id]++;
+    invalidateEntity(_entity);
+}
 
 auto Registry::entityExists(const Entity& _entity) -> const bool {
-    bool result = _entity.id < versions.size() && versions[_entity.id] == _entity.version; 
-    return result;
+    return _entity.id < versions.size() && versions[_entity.id] == _entity.version;
+}
+
+void Registry::updateEntityRecord(Entity _entity, Archetype* _archetype, size_t _chunk_index, size_t _index) {
+    EntityRecord& record = records[_entity.id];
+
+    record.archetype = _archetype;
+    record.chunk_index = _chunk_index;
+    record.index = _index;
+}
+
+void Registry::invalidateEntity(const Entity& _entity) {
+    EntityRecord& record = records[_entity.id];
+
+    record.archetype = nullptr;
+    record.chunk_index = SIZE_MAX;
+    record.index = SIZE_MAX;
+}
+
+void Registry::eraseChunkEntry(Chunk* _chunk, size_t _index) {
+    Entity swapped_entity = _chunk->swapPop(_index);
+    if (swapped_entity != Entity::Null())
+        records[swapped_entity.id].index = _index;
 }
 
 
-auto Registry::getArchetype(const Signature& _signature) -> Archetype* {
-    auto it = signature_map.find(_signature);
-    if (it != signature_map.end())
-        return it->second;
-        
-    std::unique_ptr<Archetype> new_archetype = std::make_unique<Archetype>();
-    new_archetype->signature = _signature;
-
-    Archetype* raw_archetype = new_archetype.get();
-    signature_map[_signature] = raw_archetype;
-
-    archetypes.push_back(std::move(new_archetype));
-
-    invalidateQueryCache();
-    return raw_archetype;
-}
-
-
-void Registry::invalidateQueryCache() {
-    query_cache.clear();
-    //could maybe track which signatures have have changed and just invalidate those
-}
-
-
-//REGISTRY HELPERS END
-//---------------------------------------------------------------------------------------------------------------------
-//STRUCT METHODS
-
-auto Registry::Archetype::ensureComponentArray(uint32_t _type, sComponentArray* _source_array) -> sComponentArray* {
-    auto it = component_arrays.find(_type);
-    if (it == component_arrays.end()) {
-        std::unique_ptr<sComponentArray> new_array(_source_array->cloneEmpty());
-        auto [it2, _] = component_arrays.emplace(_type, std::move(new_array));
-
-        return it2->second.get();
+auto Registry::query(const Signature _signature) -> Query* {
+    for (auto&& query : query_subscriptions) {
+        if ((query->signature & _signature) == _signature)
+            return query.get();
     }
 
-    return it->second.get();
-};
+    std::unique_ptr<Query> new_query = std::make_unique<Query>(_signature);
 
-
-void Registry::Archetype::migrateComponents(const Archetype* _source, size_t _source_index) {
-    for (auto& [type, source_array] : _source->component_arrays) {
-        if (signature.test(type)) {
-            sComponentArray* target = ensureComponentArray(type, source_array.get());
-            target->addFrom(source_array->getRaw(_source_index));
-        }
+    for (auto& archetype : archetypes) {
+        new_query->tryMatch(archetype.get());
     }
-};
 
+    Query* query_ptr = new_query.get();
 
-//STRUCT METHODS END
+    query_subscriptions.push_back(std::move(new_query));
+    return query_ptr;
+}
+
+ComponentInfo* Registry::info_list[MAX_COMPONENTS] = {};

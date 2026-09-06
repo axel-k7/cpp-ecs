@@ -1,41 +1,65 @@
 #pragma once
 
-#include "ECS.h"
-#include "systems/DummySystem.h"
-#include "components/DummyComponent.h"
+#include "core/EntityCommandBuffer.h"
+#include "systems/ExampleSystem.h"
 
-#include <random>
-#include <iostream>
 
 int main() {
-    Registry registry;
-    SystemManager sys_manager;
+    auto registry = std::make_shared<Registry>();
+    auto buffer = std::make_shared<EntityCommandBuffer>(registry);
+    auto example_system = std::make_unique<ExampleSystem>(registry, buffer);
 
-    sys_manager.registerSystem<DummySystem>(&registry);
+    constexpr size_t entity_count = 100;
 
-    constexpr size_t entity_amount = 100'000;
     std::vector<Entity> entities;
-    entities.reserve(entity_amount);
+    entities.reserve(entity_count);
 
-    for (size_t i = 0; i < entity_amount; ++i)
-        entities.push_back(registry.createEntity(DummyComponent{}));
 
-    std::mt19937 rng(12345);
-    std::uniform_int_distribution<size_t> dist(0, entity_amount - 1);
-    for (size_t i = 0; i < entity_amount; ++i) {
-        size_t idx = dist(rng);
-        Entity e = entities[idx];
-        if (registry.hasComponent<DummyComponent>(e))
-            registry.removeComponent<DummyComponent>(e);
-        else
-            registry.addComponent(e, DummyComponent{});
+    for (size_t i = 0; i < entity_count; ++i) {
+        Entity entity = registry->allocateEntity();
+
+        entities.push_back(entity);
+
+        registry->addComponents<ExampleComponent>(entity, {});
     }
 
-    for (size_t i = 0; i < 50'000; ++i) {
-        size_t idx = dist(rng);
-        if (registry.entityExists(entities[idx]))
-            registry.destroyEntity(entities[idx]);
+    std::cout << "created entities\n";
+
+
+    for (Entity entity : entities) 
+        assert(registry->tryGetComponent<ExampleComponent>(entity));
+
+    std::cout << "all entities have the correct components\n";
+
+
+    constexpr int updates = 10;
+    for (int frame = 0; frame < updates; ++frame)
+        example_system->update(1.0f / 60.0f); //delta substitute, should update a system manager instead
+
+    std::cout << "cleared initial updates\n";
+
+
+    Entity last_entity = entities.back();
+    registry->destroyEntity(last_entity);
+
+    assert(!registry->entityExists(last_entity));
+
+    entities.pop_back();
+
+    std::cout << "destroyed entity\n";
+
+
+    for (int frame = 0; frame < updates; ++frame) {
+        example_system->update(1.0f / 60.0f);
+
+        buffer->destroyEntity(entities.back());
+        entities.pop_back();
+        
+    
+        entities.push_back(buffer->createEntity());
     }
 
-    std::cout << "it works :D\n";
+    std::cout << "ran buffer commands\n";
+
+    return 0;
 }

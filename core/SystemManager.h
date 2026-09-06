@@ -7,12 +7,15 @@
 #include "System.h"
 #include "Registry.h"
 
+//needs major rewrite, maybe look at querires to account for multithreading?
+
 class SystemManager {
 public:
-    void update(const float& _delta_time);
-    void setCommandBuffer(EntityCommandBuffer* _buffer) { buffer = _buffer; }
+    SystemManager(std::shared_ptr<Registry> _registry);
 
-    template<typename T> void registerSystem(Registry* _registry, EntityCommandBuffer* _buffer);
+    void update(const float& _delta_time);
+
+    template<typename T> void registerSystem();
     template<typename T> static auto getSystemTypeID() -> uint32_t;
     template<typename T> auto getSystem() -> T*;
 private:

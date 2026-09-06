@@ -7,7 +7,7 @@ auto SystemManager::getSystemTypeID() -> uint32_t {
 }
 
 template <typename T>
-void SystemManager::registerSystem(Registry* _registry, EntityCommandBuffer* _buffer) {
+void SystemManager::registerSystem() {
     //should probably check if T is system 
     const uint32_t type = getSystemTypeID<T>();
 
